@@ -2,26 +2,60 @@
 import { WarningOutlined } from '@ant-design/icons';
 import { PageSection } from '../../components/layout/PageKit';
 import { tokens } from '../../styles/theme';
+import { ManagedLlmPanel } from '../activation/ManagedLlmPanel';
+import { isManaged } from '../activation/activationView';
+import { useActivation } from '../activation/useActivation';
 import { CloudConfigSection } from './CloudConfigSection';
 
 export function LlmTab({ onChanged }: { onChanged: () => void }): React.ReactElement {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spaceMd }}>
+  const activation = useActivation();
+  // 首次状态未取回：先不挂载手动配置，避免托管态短暂露出输入框（规格 4）
+  if (activation.snapshot === null) {
+    return (
       <PageSection title="云端 / 本地端点（OpenAI 兼容）">
         <div
           style={{
             fontSize: tokens.text.meta.size,
             lineHeight: tokens.text.meta.leading,
             color: tokens.textTertiary,
-            marginBottom: tokens.spaceMd,
           }}
         >
-          可添加多个端点按需启用：云端填 DashScope 等兼容服务；本地 Ollama 填
-          http://127.0.0.1:11434/v1、LM Studio 填其服务地址。
+          正在读取激活状态…
         </div>
-        <UnconfiguredNotice />
-        <CloudConfigSection domain="llm" onChanged={onChanged} />
       </PageSection>
+    );
+  }
+  const managed = isManaged(activation.snapshot);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spaceMd }}>
+      {/* 托管态：LLM 配置归主进程管，绝不挂载手动配置区（规格 4） */}
+      {managed && (
+        <ManagedLlmPanel
+          snapshot={activation.snapshot}
+          busy={activation.busy}
+          error={activation.error}
+          onRecheck={() => {
+            void activation.recheck();
+          }}
+        />
+      )}
+      {!managed && (
+        <PageSection title="云端 / 本地端点（OpenAI 兼容）">
+          <div
+            style={{
+              fontSize: tokens.text.meta.size,
+              lineHeight: tokens.text.meta.leading,
+              color: tokens.textTertiary,
+              marginBottom: tokens.spaceMd,
+            }}
+          >
+            可添加多个端点按需启用：云端填 DashScope 等兼容服务；本地 Ollama 填
+            http://127.0.0.1:11434/v1、LM Studio 填其服务地址。
+          </div>
+          <UnconfiguredNotice />
+          <CloudConfigSection domain="llm" onChanged={onChanged} />
+        </PageSection>
+      )}
       <PageSection title="本地大模型">
         <div style={{ fontSize: tokens.text.meta.size, lineHeight: tokens.text.meta.leading, color: tokens.textTertiary }}>
           不内置本地推理。要跑本地模型，请经 Ollama / LM Studio 的 OpenAI

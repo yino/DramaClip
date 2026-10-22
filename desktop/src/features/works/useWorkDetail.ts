@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { App as AntdApp } from 'antd';
 import type { Episode, ExportJob, PublishMeta, TitleCandidate } from '@dramaclip/protocol';
 import { exportApi, projectApi, rpc, titlesApi } from '../../services/client';
+import { isLlmBlocked } from '../activation/activationView';
+import { useActivation } from '../activation/useActivation';
 import { useJobsStore } from '../../stores/jobs';
 import { useUiStore } from '../../stores/ui';
 
@@ -88,8 +90,14 @@ function useDetailActions(
 ) {
   const { message } = AntdApp.useApp();
   const setDrawerOpen = useJobsStore((state) => state.setDrawerOpen);
+  const activation = useActivation();
+  const llmBlocked = isLlmBlocked(activation.snapshot);
   const [generating, setGenerating] = useState(false);
   const onGenerate = useCallback((): void => {
+    if (llmBlocked) {
+      message.warning('受管模型已暂停，标题生成暂不可用；请在「设置 → 激活」重新校验。');
+      return;
+    }
     setGenerating(true);
     void titlesApi
       .generate(planId)
@@ -103,7 +111,7 @@ function useDetailActions(
       .finally(() => {
         setGenerating(false);
       });
-  }, [planId, setTitles, setPublish, message]);
+  }, [planId, setTitles, setPublish, message, llmBlocked]);
   const onSelfcheck = useCallback((exportId: string): void => {
     void exportApi
       .selfcheck([exportId])
@@ -119,7 +127,7 @@ function useDetailActions(
         message.error(error instanceof Error ? error.message : String(error));
       });
   }, [message, setDrawerOpen]);
-  return { generating, onGenerate, onSelfcheck };
+  return { generating, onGenerate, onSelfcheck, llmBlocked };
 }
 
 export function useWorkDetail(exportId: string): WorkDetail {
@@ -132,6 +140,7 @@ export function useWorkDetail(exportId: string): WorkDetail {
   return {
     ...loaded,
     generating: actions.generating,
+    llmBlocked: actions.llmBlocked,
     onGenerate: actions.onGenerate,
     onSelfcheck: () => {
       actions.onSelfcheck(exportId);
@@ -142,6 +151,8 @@ export function useWorkDetail(exportId: string): WorkDetail {
 
 export interface WorkDetail extends LoadedDetail {
   generating: boolean;
+  /** 受管 LLM 已暂停：标题生成等 LLM 入口禁用（本地操作不受影响）。 */
+  llmBlocked: boolean;
   onGenerate: () => void;
   onSelfcheck: () => void;
   reload: () => void;

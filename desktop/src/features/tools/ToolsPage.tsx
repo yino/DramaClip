@@ -23,6 +23,9 @@ import {
   toolsApi,
 } from '../../services/client';
 import { PageHeader, PageSection, PageShell } from '../../components/layout/PageKit';
+import { LlmPausedNotice } from '../activation/ActivationBits';
+import { isLlmBlocked } from '../activation/activationView';
+import { useActivation } from '../activation/useActivation';
 import { tokens } from '../../styles/theme';
 
 const PAGE_DESC = '不依赖项目流程的独立小工具：贴视频/音频出文案，一键改写，文字转语音。';
@@ -329,6 +332,9 @@ function RewritePanel({ sourceText, onSendToTts }: { sourceText: string; onSendT
   const [rewritten, setRewritten] = useState('');
   const [notes, setNotes] = useState<readonly string[]>([]);
   const [rewriting, setRewriting] = useState(false);
+  // 改写是 LLM 入口；受管模型暂停时禁用，提醒可到设置页重新校验
+  const activation = useActivation();
+  const llmBlocked = isLlmBlocked(activation.snapshot);
 
   const onRewrite = (): void => {
     setRewriting(true);
@@ -364,10 +370,15 @@ function RewritePanel({ sourceText, onSendToTts }: { sourceText: string; onSendT
           ]}
           onChange={setRewriteStyle}
         />
-        <Button size="small" loading={rewriting} onClick={onRewrite}>
+        <Button size="small" loading={rewriting} disabled={llmBlocked} onClick={onRewrite}>
           改写
         </Button>
       </div>
+      {llmBlocked && (
+        <div style={{ marginTop: tokens.spaceSm }}>
+          <LlmPausedNotice />
+        </div>
+      )}
       {rewritten !== '' && (
         <div style={{ marginTop: tokens.spaceSm }}>
           <Input.TextArea rows={6} value={rewritten} readOnly />

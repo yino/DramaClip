@@ -18,6 +18,21 @@ vi.mock('../../../services/client', () => ({
   rpc: (method: string): unknown => (method === 'settings.get' ? api.get() : Promise.reject(new Error(`未预期方法 ${method}`))),
   narrationApi: { listStyles: (): unknown => api.listStyles() },
   subtitleApi: { listPresets: (): unknown => api.listPresets() },
+  // 设置页顶部「激活」区块独立取状态，不参与设置草稿
+  activationApi: {
+    status: (): unknown =>
+      Promise.resolve({
+        status: 'inactive',
+        plan: '',
+        expiresAt: '',
+        lastVerifiedAt: '',
+        maskedCode: '',
+        gatewayUrl: '',
+      }),
+    redeem: (): unknown => Promise.resolve({ ok: true }),
+    unbind: (): unknown => Promise.resolve({ ok: true }),
+    onChange: (): (() => void) => () => undefined,
+  },
 }));
 
 const VALUES: Record<string, string> = {

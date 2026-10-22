@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AppLayout } from '../components/layout/AppLayout';
+import { ActivationStatusBanner } from '../features/activation/ActivationStatusBanner';
 import { JobsFeed } from '../features/jobs/JobsFeed';
 import { onServiceEvent, systemApi } from '../services/client';
 import { subscribeAnalysisProgress, subscribeModelDownloadProgress, useUiStore } from '../stores/ui';
@@ -32,6 +33,7 @@ export function App() {
   return (
     <>
       <AppLayout />
+      <ActivationStatusBanner />
       <JobsFeed />
     </>
   );

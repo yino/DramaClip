@@ -5,12 +5,14 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import {
   METHOD_NAMES,
+  type ActivationSnapshot,
   type CopyFilesResult,
   type DataPaths,
   type RevealResult,
   type ServiceEvent,
 } from '@dramaclip/protocol';
 import { pickAudioFile, pickFolder, pickVideoFile, saveTextFile } from './services/dialog';
+import { normalizeActivationCode, type ActivationController } from './services/activation-service';
 
 export interface IpcContext {
   /** RPC 转发目标（ServiceManager.rpc）。 */
@@ -21,6 +23,8 @@ export interface IpcContext {
   dataPaths(): DataPaths;
   /** 事件广播目标窗口集合（App 启动后传入 getter，避免持有过期引用）。 */
   windows(): BrowserWindow[];
+  /** 激活控制器；启动失败/尚未装配时为 null（状态按未激活返回）。 */
+  activation: ActivationController | null;
 }
 
 /** 数据目录 = 服务端 paths._SUBDIRS 的同名约定，锚点唯一（ADR-009）。 */
@@ -60,6 +64,15 @@ async function copyFiles(files: readonly string[], destDir: string): Promise<Cop
   }
   return { copied, failed };
 }
+
+const INACTIVE_SNAPSHOT: ActivationSnapshot = {
+  status: 'inactive',
+  plan: '',
+  expiresAt: '',
+  lastVerifiedAt: '',
+  maskedCode: '',
+  gatewayUrl: '',
+};
 
 export function registerIpc(context: IpcContext): void {
   ipcMain.handle('rpc', (_event, method: unknown, params: unknown) => {
@@ -110,6 +123,27 @@ export function registerIpc(context: IpcContext): void {
     context.restartService();
     return { ok: true };
   });
+  ipcMain.handle('activation:status', (_event, recheck: unknown) => {
+    if (context.activation === null) return INACTIVE_SNAPSHOT;
+    return context.activation.status(recheck === true);
+  });
+  ipcMain.handle('activation:redeem', (_event, code: unknown) => {
+    if (context.activation === null) {
+      return Promise.reject(new Error('激活服务不可用（应用仍在启动或已退出）'));
+    }
+    // 类型/长度校验在发网络请求之前完成；只把规范化后的码交给主进程服务
+    const normalized = normalizeActivationCode(code);
+    if (normalized === null) {
+      return Promise.reject(new Error('激活码需为 8–128 个字符'));
+    }
+    return context.activation.redeem(normalized);
+  });
+  ipcMain.handle('activation:unbind', () => {
+    if (context.activation === null) {
+      return Promise.reject(new Error('激活服务不可用（应用仍在启动或已退出）'));
+    }
+    return context.activation.unbind();
+  });
   ipcMain.handle('window:control', (event, action: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win === null || typeof action !== 'string') return { ok: false };
@@ -126,5 +160,15 @@ export function registerIpc(context: IpcContext): void {
 export function broadcastEvent(context: IpcContext, event: ServiceEvent): void {
   for (const win of context.windows()) {
     if (!win.isDestroyed()) win.webContents.send('service:event', event);
+  }
+}
+
+/** 激活状态变化下发（activation:changed）；只送脱敏快照。 */
+export function broadcastActivationChanged(
+  context: IpcContext,
+  snapshot: ActivationSnapshot,
+): void {
+  for (const win of context.windows()) {
+    if (!win.isDestroyed()) win.webContents.send('activation:changed', snapshot);
   }
 }

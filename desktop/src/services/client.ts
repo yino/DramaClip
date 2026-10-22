@@ -1,6 +1,7 @@
 /** 渲染层唯一 IPC 出口（docs/desktop/01 §4）。组件禁止直接调 window.dramaclip。 */
 import type {
-  AnalysisJobStatus, AnalysisResults, CopyFilesResult, DashboardSummary, DataPaths, DramaClipBridge,
+  ActivationOperationResult, ActivationSnapshot, AnalysisJobStatus, AnalysisResults, CopyFilesResult,
+  DashboardSummary, DataPaths, DramaClipBridge,
   EngineConfig, ExportJob, ExportSubmitResult, ExportTranscriptsResult, HealthResult, ImportInspection,
   ImportRecord, JobInfo, JobsListResult, LlmTraceListResult, ModeRecommendation, ModelInfo, NarrationMode,
   NarrationPlan, OrphanCopy, PingResult, PlanDetail, PlanTraceResult, PlanVariantsResult, Project,
@@ -68,6 +69,22 @@ export function mediaUrl(path: string): string {
 export function onServiceEvent(callback: (event: ServiceEvent) => void): () => void {
   return bridge().onServiceEvent(callback);
 }
+
+/** 激活状态订阅（activation:changed）；返回退订函数。 */
+export function onActivationChanged(
+  callback: (snapshot: ActivationSnapshot) => void,
+): () => void {
+  return bridge().onActivationChanged(callback);
+}
+
+/** 桌面激活：状态查询、兑换激活码、解绑（渲染层唯一入口）。 */
+export const activationApi = {
+  status: (recheck = false): Promise<ActivationSnapshot> => bridge().activationStatus(recheck),
+  redeem: (code: string): Promise<ActivationOperationResult> => bridge().redeemActivation(code),
+  unbind: (): Promise<ActivationOperationResult> => bridge().unbindActivation(),
+  onChange: (callback: (snapshot: ActivationSnapshot) => void): (() => void) =>
+    bridge().onActivationChanged(callback),
+} as const;
 
 export const systemApi = {
   ping: (): Promise<PingResult> => rpc<PingResult>('system.ping'),

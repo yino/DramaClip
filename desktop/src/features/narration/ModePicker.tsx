@@ -4,6 +4,7 @@ import { PageSection } from '../../components/layout/PageKit';
 import type { ModeRecommendation, NarrationMode } from '@dramaclip/protocol';
 import { MODE_INFO, modeLabel } from '../../components/modeMeta';
 import { layout, tokens } from '../../styles/theme';
+import { LlmPausedNotice } from '../activation/ActivationBits';
 import type { PlanBatch } from './usePlanBatch';
 import { StageProgress } from './StageProgress';
 
@@ -21,12 +22,15 @@ export function ModePicker({
   onToggleMode,
   onSelectAll,
   onKChange,
+  llmBlocked = false,
 }: {
   batch: PlanBatch;
   modes: NarrationMode[];
   k: number;
   recommendation?: ModeRecommendation | null;
   recLoading?: boolean;
+  /** 受管模型暂停：禁用依赖 LLM 的推荐/生成入口（本地剪辑照常）。 */
+  llmBlocked?: boolean;
   /** 生成方案入口：页面先定格规格（模式×条数）再启动（规格供规划队列画骨架）。 */
   onGenerate: (modes: NarrationMode[], k: number) => void;
   onReroll?: () => void;
@@ -36,8 +40,18 @@ export function ModePicker({
 }) {
   return (
     <PageSection title="① 选模式，出方案">
+      {llmBlocked && (
+        <div style={{ marginBottom: tokens.spaceMd }}>
+          <LlmPausedNotice />
+        </div>
+      )}
       {recommendation !== null && recommendation.modes.length > 0 && (
-        <RecommendationLine recommendation={recommendation} recLoading={recLoading} onReroll={onReroll} />
+        <RecommendationLine
+          recommendation={recommendation}
+          recLoading={recLoading}
+          onReroll={onReroll}
+          disabled={llmBlocked}
+        />
       )}
       <ModeGrid modes={modes} onToggleMode={onToggleMode} />
       <PlanToolbar
@@ -47,6 +61,7 @@ export function ModePicker({
         onSelectAll={onSelectAll}
         onKChange={onKChange}
         onGenerate={onGenerate}
+        llmBlocked={llmBlocked}
       />
       {batch.error !== '' && <Alert style={{ marginTop: tokens.spaceMd }} type="error" showIcon title={batch.error} />}
     </PageSection>
@@ -58,10 +73,12 @@ function RecommendationLine({
   recommendation,
   recLoading,
   onReroll,
+  disabled = false,
 }: {
   recommendation: ModeRecommendation;
   recLoading: boolean;
   onReroll?: () => void;
+  disabled?: boolean;
 }): React.ReactElement {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spaceSm, marginBottom: tokens.spaceMd, flexWrap: 'wrap' }}>
@@ -74,7 +91,7 @@ function RecommendationLine({
           .join(' · ')}
       </span>
       {onReroll !== undefined && (
-        <Button size="small" type="text" loading={recLoading} onClick={onReroll}>
+        <Button size="small" type="text" loading={recLoading} disabled={disabled} onClick={onReroll}>
           重新推荐
         </Button>
       )}
@@ -89,6 +106,7 @@ function PlanToolbar({
   onSelectAll,
   onKChange,
   onGenerate,
+  llmBlocked,
 }: {
   batch: PlanBatch;
   modes: NarrationMode[];
@@ -96,6 +114,7 @@ function PlanToolbar({
   onSelectAll: () => void;
   onKChange: (k: number) => void;
   onGenerate: (modes: NarrationMode[], k: number) => void;
+  llmBlocked: boolean;
 }) {
   return (
     <>
@@ -119,7 +138,7 @@ function PlanToolbar({
         />
         <Button
           style={{ marginLeft: 'auto' }}
-          disabled={modes.length === 0}
+          disabled={modes.length === 0 || llmBlocked}
           loading={batch.planning}
           onClick={() => {
             onGenerate(modes, k);

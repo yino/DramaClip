@@ -48,6 +48,21 @@ vi.mock('../../../services/client', () => ({
   revealInFolder: api.revealInFolder,
   saveTextFile: api.saveTextFile,
   mediaUrl: (path: string) => `dramaclip://local/${path}`,
+  // 工具页改写入口会读激活状态：未激活 = 不拦截
+  activationApi: {
+    status: (): unknown =>
+      Promise.resolve({
+        status: 'inactive',
+        plan: '',
+        expiresAt: '',
+        lastVerifiedAt: '',
+        maskedCode: '',
+        gatewayUrl: '',
+      }),
+    redeem: (): unknown => Promise.resolve({ ok: true }),
+    unbind: (): unknown => Promise.resolve({ ok: true }),
+    onChange: (): (() => void) => () => undefined,
+  },
 }));
 
 const RESULT = {

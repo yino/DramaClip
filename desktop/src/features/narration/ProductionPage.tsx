@@ -8,6 +8,8 @@ import { exportApi, narrationApi, projectApi, settingsApi } from '../../services
 import { rememberDrama } from '../../stores/lastDrama';
 import { useUiStore } from '../../stores/ui';
 import { layout, tokens } from '../../styles/theme';
+import { isLlmBlocked } from '../activation/activationView';
+import { useActivation } from '../activation/useActivation';
 import { ExportsCard } from './ExportsCard';
 import { ModePicker } from './ModePicker';
 import { PlanPickList } from './PlanPickList';
@@ -152,6 +154,9 @@ export function ProductionPage() {
   }, [projectId]);
 
   const batch = usePlanBatch(projectId);
+  // 受管模型暂停：方案生成/重新推荐是 LLM 入口，禁用但不禁用页面其它本地操作
+  const activation = useActivation();
+  const llmBlocked = isLlmBlocked(activation.snapshot);
 
   const onGenerate = useCallback(
     (modes: NarrationMode[], k: number) => {
@@ -183,6 +188,7 @@ export function ProductionPage() {
             setModes(ALL_MODES);
           }}
           onKChange={setK}
+          llmBlocked={llmBlocked}
         />
         {batch.planning ? (
           <PlanQueue batch={batch} spec={batch.spec} />

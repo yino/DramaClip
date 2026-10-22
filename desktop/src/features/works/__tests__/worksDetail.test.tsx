@@ -19,6 +19,20 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../services/client', () => ({
+  activationApi: {
+    status: () =>
+      Promise.resolve({
+        status: 'inactive',
+        plan: '',
+        expiresAt: '',
+        lastVerifiedAt: '',
+        maskedCode: '',
+        gatewayUrl: '',
+      }),
+    redeem: () => Promise.resolve({ ok: true }),
+    unbind: () => Promise.resolve({ ok: true }),
+    onChange: () => () => undefined,
+  },
   exportApi: { get: api.get, selfcheck: api.selfcheck },
   projectApi: { get: api.projectGet },
   rpc: api.rpc,

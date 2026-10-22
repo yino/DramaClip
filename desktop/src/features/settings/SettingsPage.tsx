@@ -4,6 +4,7 @@ import { App as AntdApp, Button, Input, InputNumber, Select, Switch } from 'antd
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageHeader, PageSection, PageShell } from '../../components/layout/PageKit';
+import { ActivationSection } from '../activation/ActivationSection';
 import { narrationApi, rpc, subtitleApi } from '../../services/client';
 import { mixins } from '../../styles/mixins';
 import { layout, tokens } from '../../styles/theme';
@@ -120,6 +121,8 @@ function SettingsView(props: {
   return (
     <PageShell>
       <PageHeader title="偏好设置" desc={PAGE_DESC} />
+      {/* 激活是凭证/托管配置操作，不走 settings 草稿与吸底保存 */}
+      <ActivationSection />
       <SettingsBody draft={props.draft} sections={props.sections} onPatch={patchDraft} />
       {/* 吸底保存栏：仅在存在改动时出现，长表单滚动到底也能看见动作 */}
       {changedKeys.length > 0 && (

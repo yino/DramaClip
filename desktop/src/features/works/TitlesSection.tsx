@@ -12,6 +12,7 @@ export function TitlesSection({
   publish,
   generating,
   hasPlan,
+  llmBlocked,
   onGenerate,
   onChange,
 }: {
@@ -19,6 +20,7 @@ export function TitlesSection({
   publish?: PublishMeta | null;
   generating: boolean;
   hasPlan: boolean;
+  llmBlocked?: boolean;
   onGenerate: () => void;
   onChange: (titles: TitleCandidate[]) => void;
 }): ReactElement {
@@ -40,6 +42,7 @@ export function TitlesSection({
             size="small"
             icon={<ReloadOutlined />}
             loading={generating}
+            disabled={llmBlocked === true}
             onClick={onGenerate}
           >
             {titles.length === 0 ? '生成候选标题' : '重新生成'}

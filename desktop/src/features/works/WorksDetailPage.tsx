@@ -85,6 +85,7 @@ export function WorksDetailPage(): ReactElement {
               publish={detail.publish}
               generating={detail.generating}
               hasPlan={detail.planId !== ''}
+              llmBlocked={detail.llmBlocked}
               onGenerate={detail.onGenerate}
               onChange={detail.setTitles}
             />

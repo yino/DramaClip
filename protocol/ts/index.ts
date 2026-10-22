@@ -753,6 +753,41 @@ export type ServiceEvent =
 
 export type ServiceState = 'starting' | 'ready' | 'restarting' | 'unavailable';
 
+/** 激活状态机（唯一状态源在主进程，渲染层只读快照）。 */
+export type ActivationStatus = 'inactive' | 'verifying' | 'active' | 'suspended';
+
+/** 授权暂停原因：网络 / 令牌失效 / 设备冲突 / 到期 / 停用。 */
+export type ActivationSuspendedReason =
+  | 'network'
+  | 'invalid_token'
+  | 'device_conflict'
+  | 'expired'
+  | 'disabled';
+
+/** 渲染层可见的激活状态（绝不含令牌或激活码全文）。 */
+export interface ActivationSnapshot {
+  readonly status: ActivationStatus;
+  /** 套餐标识；未知为空串。 */
+  readonly plan: string;
+  /** 到期时间（ISO 8601）；未知为空串。 */
+  readonly expiresAt: string;
+  /** 最近一次网关校验成功时间（ISO 8601）；从未成功为空串。 */
+  readonly lastVerifiedAt: string;
+  /** 脱敏激活码（仅保留末 4 位）；未激活为空串。 */
+  readonly maskedCode: string;
+  /** 只读展示的网关基址；未配置为空串。 */
+  readonly gatewayUrl: string;
+  /** 仅 suspended 时存在。 */
+  readonly reason?: ActivationSuspendedReason;
+}
+
+/** 激活/解绑操作结果：失败时 message 是可读原因（不含敏感值），快照为操作后的状态。 */
+export interface ActivationOperationResult {
+  readonly ok: boolean;
+  readonly snapshot: ActivationSnapshot;
+  readonly message?: string;
+}
+
 /**
  * preload 暴露给渲染层的桥接 API 形状（window.dramaclip）。
  * 单一定义：preload 用 satisfies 校验实现，渲染层据此消费。
@@ -777,6 +812,14 @@ export interface DramaClipBridge {
   /** 自定义标题栏窗口控制（frame:false）。 */
   windowControl(action: 'minimize' | 'maximize-toggle' | 'close'): Promise<void>;
   onServiceEvent(callback: (event: ServiceEvent) => void): () => void;
+  /** 激活状态快照（不含令牌/激活码全文）；recheck=true 时先立即向网关校验一次。 */
+  activationStatus(recheck?: boolean): Promise<ActivationSnapshot>;
+  /** 用激活码兑换设备令牌并把 LLM 指向网关；返回脱敏状态与可读错误。 */
+  redeemActivation(code: string): Promise<ActivationOperationResult>;
+  /** 解绑：仅当 LLM 配置仍等于托管值时清空，并删除本地凭证、停止心跳。 */
+  unbindActivation(): Promise<ActivationOperationResult>;
+  /** 订阅激活状态变化（activation:changed 通道）。 */
+  onActivationChanged(callback: (snapshot: ActivationSnapshot) => void): () => void;
 }
 
 /** shell:reveal 的结果：定位失败要有原因原文，不做无声按钮。 */

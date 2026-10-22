@@ -1,8 +1,17 @@
 /** Electron 主进程入口（docs/desktop/00 §2 启动时序）。 */
-import { app, BrowserWindow, nativeTheme, protocol, screen, shell } from 'electron';
+import { app, BrowserWindow, nativeTheme, powerMonitor, protocol, safeStorage, screen, shell } from 'electron';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { registerIpc, broadcastEvent, resolveDataPaths, type IpcContext } from './ipc';
+import {
+  broadcastActivationChanged,
+  broadcastEvent,
+  registerIpc,
+  resolveDataPaths,
+  type IpcContext,
+} from './ipc';
+import { ActivationService } from './services/activation-service';
+import { ActivationStore, ACTIVATION_FILE_NAME } from './services/activation-store';
+import { GatewayUrlError, resolveGatewayUrl } from './services/gateway-client';
 import { createPreviewHandler, createPreviewRoots } from './services/preview-protocol';
 import { ServiceManager, type ServiceManagerOptions } from './services/service-manager';
 
@@ -12,6 +21,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
 let mainWindow: BrowserWindow | null = null;
 let manager: ServiceManager | null = null;
+let activation: ActivationService | null = null;
 
 // 必须在 app.ready 前注册（stream: 支持视频流；bypassCSP: 允许 media 加载）
 protocol.registerSchemesAsPrivileged([
@@ -60,10 +70,10 @@ function createMainWindow(): void {
   // 补发当前服务状态（ready 广播可能早于渲染层订阅）
   mainWindow.webContents.on('did-finish-load', () => {
     if (manager !== null) {
-      broadcastEvent(buildIpcContext(manager), {
-        type: 'service-state',
-        state: manager.currentState,
-      });
+      const context = buildIpcContext(manager);
+      broadcastEvent(context, { type: 'service-state', state: manager.currentState });
+      // 激活快照同样补发（dialog 打开或页面刷新后订阅晚于广播）
+      if (activation !== null) broadcastActivationChanged(context, activation.getSnapshot());
     }
   });
   mainWindow.on('closed', () => {
@@ -99,6 +109,7 @@ function buildIpcContext(managerInstance: ServiceManager): IpcContext {
     appVersion: () => app.getVersion(),
     dataPaths: () => resolveDataPaths(dataDir),
     windows: () => (mainWindow === null ? [] : [mainWindow]),
+    activation,
   };
 }
 
@@ -124,42 +135,100 @@ async function bootstrap(): Promise<void> {
       if (context !== null) broadcastEvent(context, event);
     },
   };
-  manager = new ServiceManager(options);
-  registerIpc(buildIpcContext(manager));
+  const instance = new ServiceManager(options);
+  manager = instance;
+  // 网关地址（D5）：DRAMACLIP_GATEWAY_URL → 打包 gateway.json → 本地默认值；
+  // 非法配置不静默回退，记录可读原因并由激活界面提示
+  let gatewayUrl = '';
+  let gatewayError: string | null = null;
+  try {
+    gatewayUrl = resolveGatewayUrl({
+      env: process.env,
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      repoRoot: REPO_ROOT,
+    }).url;
+  } catch (error) {
+    gatewayError =
+      error instanceof GatewayUrlError ? error.message : '激活网关地址配置无效（未知错误）';
+    console.error(`[activation] ${gatewayError}`);
+  }
+  const activationStore = new ActivationStore({
+    filePath: path.join(app.getPath('userData'), ACTIVATION_FILE_NAME),
+    safeStorage,
+  });
+  activation = new ActivationService({
+    store: activationStore,
+    gatewayUrl,
+    gatewayError,
+    rpc: (method, params) => instance.rpc(method, params),
+    onChange: (snapshot) => {
+      if (manager === null) return;
+      broadcastActivationChanged(buildIpcContext(manager), snapshot);
+    },
+    env: process.env,
+  });
+  registerIpc(buildIpcContext(instance));
   createMainWindow();
-  await manager.start();
+  // 单实例保证：读档 → verifying → 立即心跳（双开会在第二个实例启动时被拦下）
+  activation.start();
+  powerMonitor.on('resume', () => {
+    activation?.resume();
+  });
+  await instance.start();
 }
 
-void app.whenReady().then(() => {
-  // 本地媒体预览协议：dramaclip://local/<encodeURIComponent(绝对路径)>
-  // video 元素要求 Range/206 分段响应；路径/类型/内存三重围栏见 preview-protocol.ts
-  const previewDataRoot = app.isPackaged
-    ? path.join(app.getPath('userData'), 'data')
-    : devDataDir();
-  const getPreviewRoots = createPreviewRoots(async () => {
-    if (manager === null) return [];
-    const projects = (await manager.rpc('project.list', {})) as readonly {
-      source_path?: unknown;
-    }[]; // 受信 sidecar 边界：形状由 protocol 契约钳制
-    return projects
-      .map((project) => project.source_path)
-      .filter((value): value is string => typeof value === 'string' && value !== '');
-  }, previewDataRoot);
-  protocol.handle('dramaclip', createPreviewHandler(getPreviewRoots));
-  void bootstrap();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+/** 第二个实例启动：聚焦已有窗口后由第二个实例自己退出（避免双心跳/双写凭证）。 */
+function focusExistingWindow(): void {
+  if (mainWindow === null) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/** ready 之后的主流程（单实例守卫内才注册）。 */
+function registerLifecycle(): void {
+  void app.whenReady().then(() => {
+    // 本地媒体预览协议：dramaclip://local/<encodeURIComponent(绝对路径)>
+    // video 元素要求 Range/206 分段响应；路径/类型/内存三重围栏见 preview-protocol.ts
+    const previewDataRoot = app.isPackaged
+      ? path.join(app.getPath('userData'), 'data')
+      : devDataDir();
+    const getPreviewRoots = createPreviewRoots(async () => {
+      if (manager === null) return [];
+      const projects = (await manager.rpc('project.list', {})) as readonly {
+        source_path?: unknown;
+      }[]; // 受信 sidecar 边界：形状由 protocol 契约钳制
+      return projects
+        .map((project) => project.source_path)
+        .filter((value): value is string => typeof value === 'string' && value !== '');
+    }, previewDataRoot);
+    protocol.handle('dramaclip', createPreviewHandler(getPreviewRoots));
+    void bootstrap();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    });
   });
-});
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
 
-app.on('before-quit', (event) => {
-  if (manager === null) return;
-  event.preventDefault();
-  const instance = manager;
-  manager = null;
-  void instance.stop().finally(() => { app.quit(); });
-});
+  app.on('before-quit', (event) => {
+    activation?.stop();
+    if (manager === null) return;
+    event.preventDefault();
+    const instance = manager;
+    manager = null;
+    activation = null;
+    void instance.stop().finally(() => { app.quit(); });
+  });
+}
+
+// 单实例锁必须在 ready 前获取：拿不到就聚焦已有窗口并退出（Q19）
+if (app.requestSingleInstanceLock()) {
+  app.on('second-instance', focusExistingWindow);
+  registerLifecycle();
+} else {
+  app.quit();
+}

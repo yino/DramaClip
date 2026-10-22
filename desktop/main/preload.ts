@@ -1,6 +1,14 @@
 /** preload：contextBridge 暴露 window.dramaclip（渲染层唯一入口，docs/desktop/00 §3）。 */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
-import type { CopyFilesResult, DataPaths, DramaClipBridge, RevealResult, ServiceEvent } from '@dramaclip/protocol';
+import type {
+  ActivationOperationResult,
+  ActivationSnapshot,
+  CopyFilesResult,
+  DataPaths,
+  DramaClipBridge,
+  RevealResult,
+  ServiceEvent,
+} from '@dramaclip/protocol';
 
 const api = {
   rpc: (method: string, params: Record<string, unknown> = {}): Promise<unknown> =>
@@ -28,6 +36,19 @@ const api = {
     };
     ipcRenderer.on('service:event', listener);
     return () => ipcRenderer.removeListener('service:event', listener);
+  },
+  activationStatus: (recheck = false): Promise<ActivationSnapshot> =>
+    ipcRenderer.invoke('activation:status', recheck) as Promise<ActivationSnapshot>,
+  redeemActivation: (code: string): Promise<ActivationOperationResult> =>
+    ipcRenderer.invoke('activation:redeem', code) as Promise<ActivationOperationResult>,
+  unbindActivation: (): Promise<ActivationOperationResult> =>
+    ipcRenderer.invoke('activation:unbind') as Promise<ActivationOperationResult>,
+  onActivationChanged: (callback: (snapshot: ActivationSnapshot) => void): (() => void) => {
+    const listener = (_event: IpcRendererEvent, payload: ActivationSnapshot): void => {
+      callback(payload);
+    };
+    ipcRenderer.on('activation:changed', listener);
+    return () => ipcRenderer.removeListener('activation:changed', listener);
   },
 } as const satisfies DramaClipBridge;
 
