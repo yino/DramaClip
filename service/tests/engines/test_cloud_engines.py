@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -299,3 +300,172 @@ def test_dashscope_asr_carries_the_key_per_call(
 
     assert [call.get("api_key") for call in captured["calls"]] == ["sk-mine", "sk-mine"]
     assert dashscope.api_key == other_job_key, "全局 Key 被覆写：另一条任务的转写会用错凭据"
+
+
+def _stub_asr_sequence(
+    monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any], responses: list[Any]
+) -> None:
+    """桩切片同步链：固定两片，按调用顺序返回 200 句表或任意错误响应。"""
+    from dramaclip.engines.analysis import pause_split
+    from dramaclip.engines.analysis import transcriber as mod
+
+    clips = [pause_split.Clip(0.0, 2.0), pause_split.Clip(2.0, 4.0)]
+    monkeypatch.setattr(mod.pause_split, "speech_clips", lambda _p, **_k: clips)
+    monkeypatch.setattr(
+        mod.pause_split,
+        "split_wav",
+        lambda _wav, clip_list, out_dir: [
+            (clip, out_dir / f"clip-{index}.wav")
+            for index, clip in enumerate(clip_list)
+        ],
+    )
+
+    def _call(**kwargs: Any) -> Any:
+        calls = captured.setdefault("calls", [])
+        calls.append(kwargs)
+        resp = responses[min(len(calls) - 1, len(responses) - 1)]
+        if isinstance(resp, Exception):
+            raise resp
+        return resp
+
+    monkeypatch.setattr(
+        "dashscope.MultiModalConversation",
+        type("MultiModalConversation", (), {"call": staticmethod(_call)}),
+    )
+
+
+def _wordless_resp() -> Any:
+    """百炼对静音/纯音乐片的真实响应形状。"""
+    return SimpleNamespace(
+        status_code=400,
+        code="CLIENT_ERROR",
+        message="ASR_RESPONSE_HAVE_NO_WORDS",
+        output={},
+    )
+
+
+def test_dashscope_asr_skips_wordless_chunk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """某片无人声（音乐/静音）回 400 no-words → 跳过该片，不拖死整集。
+
+    真实事故：51s 短剧按能量切 8 片，其中 2 片是 -26dB 的 BGM，
+    百炼回 CLIENT_ERROR/ASR_RESPONSE_HAVE_NO_WORDS，旧逻辑第一片就抛
+    RuntimeError，整集分析失败。
+    """
+    words = SimpleNamespace(
+        status_code=200,
+        code="",
+        message="",
+        output={"sentences": [{"begin_time": 0, "end_time": 1000, "text": "有人声"}]},
+    )
+    captured: dict[str, Any] = {}
+    _stub_asr_sequence(monkeypatch, captured, [_wordless_resp(), words])
+    wav = tmp_path / "ep.wav"
+    _write_wav(wav, seconds=4.0)
+
+    segments = DashscopeCloudAsrEngine(api_key="sk-test").transcribe(wav)
+
+    # 第一片跳过、第二片照常合并，片起点偏移仍生效
+    assert [(s.start, s.text) for s in segments] == [(2.0, "有人声")]
+    assert len(captured["calls"]) == 2, "跳过不等于不调下一片"
+
+
+def test_dashscope_asr_all_wordless_warns_not_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """全片无人声 → 空结果 + 警告（该集可能没有对白），不判失败。"""
+    captured: dict[str, Any] = {}
+    _stub_asr_sequence(monkeypatch, captured, [_wordless_resp()])
+    wav = tmp_path / "ep.wav"
+    _write_wav(wav, seconds=4.0)
+
+    assert DashscopeCloudAsrEngine(api_key="sk-test").transcribe(wav) == []
+    assert "均无词" in caplog.text
+
+
+def test_dashscope_asr_other_errors_still_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """其它错误（Key 无效/限流/服务端错）仍然整集失败，不被 no-words 特判吞掉。"""
+    bad_key = SimpleNamespace(
+        status_code=401,
+        code="InvalidApiKey",
+        message="Invalid API-key provided.",
+        output={},
+    )
+    captured: dict[str, Any] = {}
+    _stub_asr_sequence(monkeypatch, captured, [bad_key])
+    wav = tmp_path / "ep.wav"
+    _write_wav(wav, seconds=4.0)
+
+    with pytest.raises(RuntimeError, match="云端转写失败"):
+        DashscopeCloudAsrEngine(api_key="sk-test").transcribe(wav)
+    assert len(captured["calls"]) == 1, "业务错误不该重试"
+
+
+def test_dashscope_asr_retries_transient_upload_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """上传端点偶发 TLS EOF（本机实测约 1/3 次）→ 单片退避重试，重试成功即整集成功。"""
+    from dramaclip.engines.analysis import transcriber as trans_mod
+
+    monkeypatch.setattr(trans_mod, "time", SimpleNamespace(sleep=lambda _s: None))
+    transient = ConnectionError(
+        "HTTPSConnectionPool(host='dashscope.aliyuncs.com', port=443): Max retries exceeded "
+        "with url: /api/v1/uploads?action=getPolicy&model=qwen-audio-3.1-asr-flash "
+        "(Caused by SSLError(SSLEOFError(8, 'EOF occurred in violation of protocol')))"
+    )
+    words = SimpleNamespace(
+        status_code=200,
+        code="",
+        message="",
+        output={"sentences": [{"begin_time": 0, "end_time": 1000, "text": "重试成功"}]},
+    )
+    captured: dict[str, Any] = {}
+    _stub_asr_sequence(monkeypatch, captured, [transient, transient, words])
+    wav = tmp_path / "ep.wav"
+    _write_wav(wav, seconds=4.0)
+
+    segments = DashscopeCloudAsrEngine(api_key="sk-test").transcribe(wav)
+
+    assert [s.text for s in segments] == ["重试成功", "重试成功"]
+    # 第一片：2 次失败 + 1 次成功；第二片：1 次成功
+    assert len(captured["calls"]) == 4
+
+
+def test_dashscope_asr_parses_singular_sentence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """真实响应里短音频只给 output.sentence（单个字典），没有 sentences 列表。
+
+    3.0 无分离时就是此形状；旧解析只认 sentences，会把转写成功当空片吞掉，
+    整集静默无字幕却报「分析成功」。
+    """
+    sentence = {
+        "begin_time": 80,
+        "end_time": 3000,
+        "text": "前辈此恩定当厚报",
+        "words": [{"begin_time": 80, "end_time": 3000, "text": "前辈此恩定当厚报"}],
+    }
+    resp = SimpleNamespace(
+        status_code=200,
+        code="",
+        message="",
+        output={
+            "text": "前辈此恩定当厚报",
+            "output": {"request_id": "r", "sentence": sentence},
+        },
+    )
+    captured: dict[str, Any] = {}
+    _stub_asr_sequence(monkeypatch, captured, [resp])
+    wav = tmp_path / "ep.wav"
+    _write_wav(wav, seconds=4.0)
+
+    segments = DashscopeCloudAsrEngine(api_key="sk-test").transcribe(wav)
+
+    # 两片都拿到同一句，第二片按片起点 2.0s 偏移
+    assert [(s.start, s.end, s.text) for s in segments] == [
+        (0.08, 3.0, "前辈此恩定当厚报"),
+        (2.08, 5.0, "前辈此恩定当厚报"),
+    ]

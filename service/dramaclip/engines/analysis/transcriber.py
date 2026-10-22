@@ -7,6 +7,7 @@ import contextlib
 import logging
 import re
 import shutil
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -679,6 +680,9 @@ class DashscopeCloudAsrEngine:
     # 单片上限：官方 5 分钟/次，切 4 分钟留合并与边界余量
     _CHUNK_S = 240.0
 
+    # 上传网关偶发 TLS EOF（本机实测约 1/3 次），单片失败不该拖垮整集
+    _CHUNK_ATTEMPTS = 3
+
     # 只有这一族实测回传字级 speaker_id；fun-asr 系没有分离字段，要了也不会给
     _DIARIZED_MODEL_PREFIX = "qwen-audio-3.1"
 
@@ -729,9 +733,17 @@ class DashscopeCloudAsrEngine:
         with tempfile.TemporaryDirectory(prefix="asr-cloud-") as tmp:
             work = Path(tmp)
             for clip, clip_path in pause_split.split_wav(wav_path, chunks, work):
-                for sentence in self._call(MultiModalConversation, clip_path, sample_rate):
+                for sentence in self._call_with_retry(
+                    MultiModalConversation, clip_path, sample_rate
+                ):
                     segments.append(self._segment(clip.start, sentence, labels))
         segments.sort(key=lambda s: s.start)
+        if not segments:
+            _LOGGER.warning(
+                "云端转写：%d 个分片均无词（%s），该集可能没有人声对白",
+                len(chunks),
+                wav_path.name,
+            )
         return segments
 
     def _chunks(self, wav_path: Path) -> list[pause_split.Clip]:
@@ -764,6 +776,27 @@ class DashscopeCloudAsrEngine:
                 )
         return chunks
 
+    def _call_with_retry(
+        self, client: Any, clip_path: Path, sample_rate: int
+    ) -> list[dict[str, Any]]:
+        """单片转写带退避重试；只重试网络类错误，Key/参数等业务错误立即上抛。"""
+        for attempt in range(1, self._CHUNK_ATTEMPTS + 1):
+            try:
+                return self._call(client, clip_path, sample_rate)
+            except OSError as exc:
+                if attempt >= self._CHUNK_ATTEMPTS:
+                    raise
+                _LOGGER.warning(
+                    "云端转写分片上传/连接失败（第 %d/%d 次，%s: %s），%.1fs 后重试",
+                    attempt,
+                    self._CHUNK_ATTEMPTS,
+                    type(exc).__name__,
+                    str(exc)[:160],
+                    attempt * 0.5,
+                )
+                time.sleep(attempt * 0.5)
+        raise AssertionError("分片重试循环未返回")
+
     def _call(
         self, client: Any, clip_path: Path, sample_rate: int
     ) -> list[dict[str, Any]]:
@@ -780,15 +813,27 @@ class DashscopeCloudAsrEngine:
             **kwargs,
         )
         if rsp.status_code != 200:
+            # 百炼对静音/纯音乐片回 400 CLIENT_ERROR + ASR_RESPONSE_HAVE_NO_WORDS：
+            # 该片没有可转写的词，不等于整集失败——跳过它继续下一片。
+            if rsp.code == "CLIENT_ERROR" and "ASR_RESPONSE_HAVE_NO_WORDS" in (rsp.message or ""):
+                return []
             raise RuntimeError(
                 f"云端转写失败（{self._model}）: {rsp.code} {rsp.message}"
             )
-        out = rsp.output
-        sents = out.get("sentences")
-        if not sents:
-            inner = out.get("output")
-            sents = inner.get("sentences") if isinstance(inner, dict) else None
-        return list(sents or [])
+        out = rsp.output or {}
+        inner = out.get("output")
+        # 真实响应有两种形状：分离/多句时 output.sentences 是列表；短音频或
+        # 无分离（3.0）时只回 output.sentence 单个字典，没有 sentences 列表。
+        # 只认 sentences 会把「转写成功」误当空片，整集静默无字幕。
+        for sents in (
+            out.get("sentences"),
+            inner.get("sentences") if isinstance(inner, dict) else None,
+            [inner["sentence"]] if isinstance(inner, dict) and inner.get("sentence") else None,
+            [out["sentence"]] if out.get("sentence") else None,
+        ):
+            if sents:
+                return list(sents)
+        return []
 
     def _segment(
         self, offset_s: float, sentence: dict[str, Any], labels: dict[int, str]
