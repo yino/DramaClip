@@ -39,6 +39,40 @@ def resolve_ffprobe() -> str:
     return found
 
 
+@lru_cache(maxsize=32)
+def supports_filter(name: str) -> bool:
+    """这台机器的 ffmpeg 是否编进了某个滤镜（如 ``ass``/``subtitles``）。
+
+    为什么要有这个探针：Homebrew 的 ffmpeg 8.1.2 **没有编入 libass**
+    （``ffmpeg -buildconf`` 无 ``--enable-libass``，``-filters`` 里没有 ass），
+    烧字幕的段会以一句 ``No option name near '…ass:fontsdir=…'`` 的 234 号退出
+    结束——既不像缺能力，也指不到要换 ffmpeg。导出前先问一句，才能给可行动的
+    错误（真机 2026-10-21 实测）。
+
+    探测本身失败（找不到 ffmpeg、命令跑不起来）时返回 ``True``：乐观放行，
+    宁可让真正的 ffmpeg 错误带原文上浮，也不要把「探测不顺」误判成「能力缺失」
+    而拦下本来能出片的机器。
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 - 参数为受控列表
+            [resolve_ffmpeg(), "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return True
+    if completed.returncode != 0:
+        return True
+    for line in completed.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == name:
+            return True
+    return False
+
+
 def version(force: bool = False) -> str:
     """这台机器上那个 ffmpeg 自述的版本号（如 ``8.1.1``）；拿不到即空串。
 

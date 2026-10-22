@@ -112,12 +112,14 @@ def run(
     watcher: threading.Timer | None = None
     stop_killer = threading.Event()
     killer: threading.Thread | None = None
+    drainer: threading.Thread | None = None
     try:
         if cancel is not None and cancel.is_set():
             raise FfmpegError("ffmpeg 已取消", cancelled=True)
-        threading.Thread(
+        drainer = threading.Thread(
             target=_drain_stderr, args=(process, stderr_lines), daemon=True
-        ).start()
+        )
+        drainer.start()
         if timeout_s is not None:
             watcher = threading.Timer(timeout_s, process.kill)
             watcher.start()
@@ -138,6 +140,11 @@ def run(
                 if seconds is not None and on_progress is not None and total_duration_s:
                     on_progress(min(seconds / total_duration_s, 1.0))
         returncode = process.wait()
+        if drainer is not None:
+            # stderr 由另一个线程读：进程刚退出时管道里可能还有没读净的行。不等它
+            # 读完就读 sink，真机表现是「ffmpeg 退出码 234：」后面空着——错误被
+            # 分进 unknown，还会白做一次编码回退（2026-10-20 出片失败实测）。
+            drainer.join(timeout=2.0)
         if cancel is not None and cancel.is_set():
             raise FfmpegError("ffmpeg 已取消", returncode=returncode, cancelled=True)
         if returncode != 0:
@@ -159,6 +166,8 @@ def run(
         if process.poll() is None:
             process.kill()
             process.wait()
+        if drainer is not None:
+            drainer.join(timeout=2.0)
 
 
 def _drain_stderr(process: subprocess.Popen[str], sink: list[str]) -> None:

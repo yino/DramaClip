@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from dramaclip.engines.exporter import encoder
 from dramaclip.engines.exporter.encoder import cut_segment_args
 from dramaclip.engines.subtitle import caption_font
+from dramaclip.infra.ffmpeg import runner
 
 
 def test_cut_segment_args_original_audio() -> None:
@@ -434,3 +437,31 @@ def test_missing_windows_keep_full_length_erase() -> None:
             erase_windows=windows,
         )
         assert _vf(args) == baseline, f"窗={windows} 降级必须不可见"
+
+
+def test_missing_libass_fails_with_an_actionable_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ffmpeg 没编 libass 时，报错要指到「换 ffmpeg」，别只留一句 234 号退出。
+
+    真机依据（2026-10-21）：Homebrew ffmpeg 8.1.2 无 libass，段命令以
+    ``No option name near '…ass:fontsdir=…'`` / 退出码 234 结束；kind 归 invalid
+    （回退也救不了，别再白跑一遍）。
+    """
+    monkeypatch.setattr(encoder, "supports_filter", lambda name: False)
+
+    with pytest.raises(runner.FfmpegError) as excinfo:
+        cut_segment_args(
+            "src.mp4",
+            "seg.mp4",
+            start=0,
+            end=10,
+            audio="original",
+            tts_audio=None,
+            rng=random.Random(7),
+            ass_path="seg_000.ass",
+        )
+
+    message = str(excinfo.value)
+    assert excinfo.value.kind == "invalid"
+    assert "libass" in message and "ffmpeg" in message

@@ -16,8 +16,41 @@ from dramaclip.transport.rpc import Router, RpcRequest
 
 
 class _Completed:
-    def __init__(self, stdout: str) -> None:
+    def __init__(self, stdout: str, returncode: int = 0) -> None:
         self.stdout = stdout
+        self.returncode = returncode
+
+
+def test_supports_filter_reads_the_filter_list(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`-filters` 列表里第二列才是滤镜名：靠名字找准，别把描述里的字样当能力。"""
+
+    def fake_run(*args: Any, **kwargs: Any) -> _Completed:
+        return _Completed(
+            "Filters:\n"
+            " ... ass               V->V       Render ASS subtitles.\n"
+            " ... subtitles         V->V       Render text subtitles.\n"
+        )
+
+    monkeypatch.setattr(binaries, "resolve_ffmpeg", lambda: "/fake/ffmpeg")
+    monkeypatch.setattr(binaries.subprocess, "run", fake_run)
+    binaries.supports_filter.cache_clear()
+
+    assert binaries.supports_filter("ass") is True
+    assert binaries.supports_filter("drawtext") is False
+
+
+def test_supports_filter_is_optimistic_when_the_probe_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """探测本身不顺（找不到 ffmpeg 等）按「未知」放行：别把探测失败当成能力缺失。"""
+
+    def explode() -> str:
+        raise FileNotFoundError("找不到 ffmpeg")
+
+    monkeypatch.setattr(binaries, "resolve_ffmpeg", explode)
+    binaries.supports_filter.cache_clear()
+
+    assert binaries.supports_filter("ass") is True
 
 
 def test_version_parses_the_first_line_header(monkeypatch: pytest.MonkeyPatch) -> None:

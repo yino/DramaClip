@@ -34,7 +34,7 @@ from dramaclip.engines.subtitle import caption_font
 from dramaclip.infra import config
 from dramaclip.infra.ffmpeg import probe as ffprobe_mod
 from dramaclip.infra.ffmpeg import runner
-from dramaclip.infra.ffmpeg.binaries import resolve_ffmpeg, resolve_ffprobe
+from dramaclip.infra.ffmpeg.binaries import resolve_ffmpeg, resolve_ffprobe, supports_filter
 from dramaclip.infra.ffmpeg.probe import probe
 
 _LOGGER = logging.getLogger(__name__)
@@ -323,6 +323,14 @@ def cut_segment_args(
         *_xfade_filters("fade", out_dur, vin, vout),
     ]
     if ass_path:
+        if not supports_filter("ass"):
+            raise runner.FfmpegError(
+                "当前 ffmpeg 缺少 libass（ass 滤镜），无法烧录字幕。"
+                "请换用带 libass 的 ffmpeg：macOS 可 `brew install ffmpeg@7`（或 ffmpeg-full）"
+                "后把二进制放到 resources/ffmpeg/ffmpeg；Windows 随包的 "
+                "resources/ffmpeg/ffmpeg.exe 已带 libass。",
+                kind="invalid",
+            )
         filters.append(
             f"ass={_escape_filter_path(ass_path)}"
             f":{caption_font.fontsdir_option(caption_font.caption_font())}"
