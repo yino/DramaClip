@@ -10,6 +10,8 @@ K 张卡，其中几张是同一部片换了个说法，正是 §4.3 要拦的�
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -244,6 +246,43 @@ def test_unknown_arc_rejects(llm: Any) -> None:
     ]
     with pytest.raises(ValueError, match="母题不认识"):
         _select()
+
+
+def test_arc_chinese_name_is_normalized(llm: Any) -> None:
+    """实测故障：模型把菜单里的中文名「先扬后揭」当 arc 交回 → 归一成 id，不为格式整批作废。"""
+    llm.queue = [
+        {"angles": [dict(_angle(1, 1), arc="先扬后揭"), _angle(2, 2), _angle(3, 3)]},
+    ]
+    briefs = _select()
+    assert briefs[0].arc == story_arc.GLORY_FIRST
+
+
+def test_retry_appends_validation_feedback(llm: Any) -> None:
+    """第二次尝试要带上一次的错误提示——同 prompt 重试等于没重试。"""
+    llm.queue = [
+        {"angles": [dict(_angle(1, 1), name="名" * 13), _angle(2, 2), _angle(3, 3)]},
+        {"angles": [_angle(1, 1), _angle(2, 2), _angle(3, 3)]},
+    ]
+    briefs = _select()
+    assert len(briefs) == 3
+    assert len(FakeLlm.calls) == 2
+    assert "未通过校验" in FakeLlm.calls[1]
+
+
+def test_failed_attempt_keeps_raw_in_trace(llm: Any, tmp_path: Path) -> None:
+    """验收失败也要把模型原始输出写进留痕——看不到请求就无法定位。"""
+    llm.queue = [
+        {"angles": [dict(_angle(1, 1), arc="hero_journey"), _angle(2, 2), _angle(3, 3)]},
+        {"angles": []},
+    ]
+    with pytest.raises(ValueError, match="选题未产出"):
+        _select(trace_dir=tmp_path)
+    files = list(tmp_path.glob("llm_angles_*.json"))
+    assert len(files) == 1
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+    assert payload["attempts"][0]["raw"]["angles"][0]["arc"] == "hero_journey"
+    assert "母题不认识" in payload["attempts"][0]["error"]
+    assert "选题只给出 0 条角度" in payload["attempts"][1]["error"]
 
 
 def test_empty_arc_rejects(llm: Any) -> None:

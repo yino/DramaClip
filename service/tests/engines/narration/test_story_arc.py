@@ -35,6 +35,32 @@ def test_card_of_unknown_returns_none() -> None:
     assert story_arc.card_of("") is None
 
 
+def test_resolve_accepts_id_name_and_menu_form() -> None:
+    """模型把中文名当 arc 回来（实测 '先扬后揭'）时归一成 id；三种写法都要认。"""
+    assert story_arc.resolve("glory_first") == "glory_first"
+    assert story_arc.resolve("先扬后揭") == "glory_first"
+    assert story_arc.resolve("先扬后揭(glory_first)") == "glory_first"
+    assert story_arc.resolve("  glory_first  ") == "glory_first"
+
+
+def test_resolve_unknown_returns_empty() -> None:
+    assert story_arc.resolve("hero_journey") == ""
+    assert story_arc.resolve("") == ""
+
+
+def test_card_of_accepts_chinese_name() -> None:
+    """旧库/旧方案里存的是中文名时也能取到结构卡（调用方不再静默丢卡）。"""
+    card = story_arc.card_of("先扬后揭")
+    assert card is not None
+    assert card.arc_id == story_arc.GLORY_FIRST
+
+
+def test_menu_line_puts_id_before_name() -> None:
+    """菜单写成「id（中文名）」：id 在前，减少模型把中文名当 arc 的概率。"""
+    menu = story_arc.menu_line()
+    assert menu.index(story_arc.GLORY_FIRST) < menu.index("先扬后揭")
+
+
 def test_menu_line_lists_all_cards() -> None:
     menu = story_arc.menu_line()
     for arc_id in story_arc.ids():

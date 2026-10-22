@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ from dramaclip.engines import llm_prompts
 from dramaclip.engines.llm_trace import dump_trace, trace_path
 from dramaclip.engines.narration import scriptwriter, story_arc
 from dramaclip.engines.semantic.llm_client import LlmUnavailable, client_for
+
+_LOGGER = logging.getLogger(__name__)
 
 ANGLE_LLM_TIMEOUT_S = 240.0  # 与成稿同量级：要读完整剧摘录再给 K 条角度
 _ATTEMPTS = 2
@@ -34,7 +37,7 @@ _SYSTEM_PROMPT = (
     "不要其他文字。\n"
     f"硬性要求：角度名互不相同且各不超过 {_MAX_NAME_CHARS} 字；"
     f"reason 不超过 {_MAX_REASON_CHARS} 字、hook 不超过 {_MAX_HOOK_CHARS} 字；"
-    "arc 必须是上面列出的母题 id 之一；"
+    "arc 必须填上面列出的母题 id（如 glory_first），不要填中文名；"
     "hook 必须含具体反差事实（身份/生死/数字/当众打脸），禁止「他竟然…」式空钩；"
     "hook 的下笔角度要服合所选母题的开场（先扬后揭的钩子抛的是风光、蓄力爆发的"
     "钩子抛的是当众羞辱、爆点回环的钩子抛的是最炸一瞬）；"
@@ -105,13 +108,14 @@ def _sanitize(
         name = candidate.name.strip()
         reason = candidate.reason.strip()
         hook = candidate.hook.strip()
-        arc = candidate.arc.strip()
+        arc = story_arc.resolve(candidate.arc)
         numbers = sorted(set(candidate.episode_numbers))
         if not name or not reason or not hook:
             raise ValueError("角度名、理由、钩子首句都不得为空")
-        if arc not in story_arc.ids():
+        if not arc:
             raise ValueError(
-                f"角度「{name}」的母题不认识：{arc!r}（必须从母题菜单里选）"
+                f"角度「{name}」的母题不认识：{candidate.arc!r}（必须从母题菜单里选，"
+                "id 或中文名都认）"
             )
         if len(name) > _MAX_NAME_CHARS:
             raise ValueError(f"角度名超出长度上限（{_MAX_NAME_CHARS} 字）：{name}")
@@ -227,15 +231,27 @@ def select_angles(
         f"台词转写：\n{transcript}"
     )
     llm = client_for(settings, min_timeout_s=ANGLE_LLM_TIMEOUT_S, site="取材角度")
+    system = (
+        llm_prompts.system_override(settings, "prompt.angles_system") or _SYSTEM_PROMPT
+    )
+    trace = trace_path(
+        trace_dir, f"llm_angles_{mode}_{time.strftime('%m%d_%H%M%S')}.json"
+    )
     attempts: list[dict[str, Any]] = []
     briefs: list[AngleBrief] | None = None
-    for _ in range(_ATTEMPTS):
+    retry_hint = ""
+    _LOGGER.info(
+        "选题调用：mode=%s k=%d，system %d 字 / user %d 字，留痕 %s",
+        mode,
+        k,
+        len(system),
+        len(user_prompt),
+        trace,
+    )
+    for attempt_no in range(1, _ATTEMPTS + 1):
+        raw: Any = None
         try:
-            system = (
-                llm_prompts.system_override(settings, "prompt.angles_system")
-                or _SYSTEM_PROMPT
-            )
-            raw = llm.chat_json(system, user_prompt)
+            raw = llm.chat_json(system, user_prompt + retry_hint)
             briefs = _sanitize(
                 raw,
                 k=k,
@@ -243,16 +259,27 @@ def select_angles(
                 excluded=excluded,
             )
         except (LlmUnavailable, ValueError, TypeError, KeyError) as exc:
-            attempts.append({"error": f"{type(exc).__name__}: {exc}"})
+            attempts.append({"error": f"{type(exc).__name__}: {exc}", "raw": raw})
+            _LOGGER.warning(
+                "选题第 %d/%d 次不合格：%s（原始输出见 %s）",
+                attempt_no,
+                _ATTEMPTS,
+                exc,
+                trace,
+            )
+            retry_hint = (
+                f"\n\n上一次输出未通过校验：{exc}。"
+                "请严格按 system 里的格式重答；arc 填括号前的英文 id，不要填中文名。"
+            )
             continue
         attempts.append({"raw": raw, "accepted": True})
         break
-    stamp = time.strftime("%m%d_%H%M%S")
     dump_trace(
-        trace_path(trace_dir, f"llm_angles_{mode}_{stamp}.json"),
+        trace,
         {"system": system, "user": user_prompt, "attempts": attempts},
     )
     if briefs is None:
         detail = "；".join(str(item["error"]) for item in attempts)
+        _LOGGER.error("选题失败：%s（原始往返 %s）", detail, trace)
         raise ValueError(f"选题未产出 {k} 条合格角度：{detail}")
     return briefs

@@ -194,9 +194,31 @@ _ARCS: dict[str, ArcCard] = {
 }
 
 
+def resolve(raw: str) -> str:
+    """把模型回的母题写法归一成 id：id、人读名、「名(id)」都认。
+
+    提示词菜单写的是「先扬后揭(glory_first)」，模型时常直接把中文名当 arc 回来；
+    骨架不因写法作废，验收与旧库读取统一在此归一。
+    """
+    text = str(raw or "").strip().strip("「」\"'")
+    lowered = text.lower()
+    if lowered in _ARCS:
+        return lowered
+    for card in _ARCS.values():
+        if text == card.name:
+            return card.arc_id
+    for card in _ARCS.values():
+        if card.arc_id in lowered:
+            return card.arc_id
+    for card in _ARCS.values():
+        if card.name in text:
+            return card.arc_id
+    return ""
+
+
 def card_of(arc_id: str) -> ArcCard | None:
-    """按 id 取母题卡；未知 id（旧库方案 / 桩环境）回 None，调用方跳过注入。"""
-    return _ARCS.get(arc_id)
+    """按 id/人读名取母题卡；未知写法（旧库方案 / 桩环境）回 None，调用方跳过注入。"""
+    return _ARCS.get(resolve(arc_id))
 
 
 def ids() -> tuple[str, ...]:
@@ -204,7 +226,11 @@ def ids() -> tuple[str, ...]:
 
 
 def menu_line() -> str:
-    """选题提示词里的母题菜单：逐张列出，附一句话本质。"""
+    """选题提示词里的母题菜单：id 在前、人读名在后，附一句话本质。
+
+    实测模型会把「先扬后揭(glory_first)」的中文名当 arc 交回；把 id 放前面
+    （glory_first（先扬后揭））能少一半歧义，验收侧另有 resolve 兜底。
+    """
     return "；".join(
-        f"{card.name}({card.arc_id})：{card.essence}" for card in _ARCS.values()
+        f"{card.arc_id}（{card.name}）：{card.essence}" for card in _ARCS.values()
     )

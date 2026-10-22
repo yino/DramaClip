@@ -265,8 +265,14 @@ function ThinRow({
         </span>
       )}
       {onTrace !== undefined && (
-        <Button size="small" type="text" style={{ marginLeft: 'auto', flexShrink: 0 }} onClick={onTrace}>
-          往返
+        <Button
+          size="small"
+          type="text"
+          title="查看这次生成的 LLM 往返（system / user / 原始输出）"
+          style={{ marginLeft: 'auto', flexShrink: 0 }}
+          onClick={onTrace}
+        >
+          查看请求
         </Button>
       )}
       <span
