@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { AppLayout } from '../components/layout/AppLayout';
+import { ActivationGate } from '../features/activation/ActivationGate';
 import { ActivationStatusBanner } from '../features/activation/ActivationStatusBanner';
 import { JobsFeed } from '../features/jobs/JobsFeed';
 import { onServiceEvent, systemApi } from '../services/client';
@@ -31,10 +32,10 @@ export function App() {
   }, [setServiceState]);
 
   return (
-    <>
+    <ActivationGate>
       <AppLayout />
       <ActivationStatusBanner />
       <JobsFeed />
-    </>
+    </ActivationGate>
   );
 }

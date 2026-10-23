@@ -1,44 +1,15 @@
 /** 偏好设置 → 激活：未激活可兑换；托管态展示套餐/到期/脱敏码/网关与解绑。 */
-import { Alert, Button, Input, Popconfirm } from 'antd';
-import { useState } from 'react';
+import { Alert, Button, Popconfirm } from 'antd';
 import { PageSection } from '../../components/layout/PageKit';
 import { tokens } from '../../styles/theme';
-import { ActivationInfoRow, ActivationReasonAlert, ActivationStatusTag } from './ActivationBits';
+import {
+  ActivationCodeEntry,
+  ActivationInfoRow,
+  ActivationReasonAlert,
+  ActivationStatusTag,
+} from './ActivationBits';
 import { formatTime, MANAGED_HINT, planLabel } from './activationView';
 import { useActivation } from './useActivation';
-
-/** 激活码输入行；兑换成功后清空输入。 */
-function CodeEntry({
-  busy,
-  onRedeem,
-}: {
-  busy: boolean;
-  onRedeem: (code: string) => Promise<boolean>;
-}): React.ReactElement {
-  const [code, setCode] = useState('');
-  const submit = (): void => {
-    void (async () => {
-      if (await onRedeem(code)) setCode('');
-    })();
-  };
-  return (
-    <div style={{ display: 'flex', gap: tokens.spaceSm, flexWrap: 'wrap', maxWidth: 640 }}>
-      <Input
-        style={{ flex: 1, minWidth: 260 }}
-        value={code}
-        placeholder="输入激活码（8–128 个字符）"
-        disabled={busy}
-        onChange={(event) => {
-          setCode(event.target.value);
-        }}
-        onPressEnter={submit}
-      />
-      <Button type="primary" loading={busy} onClick={submit}>
-        激活
-      </Button>
-    </div>
-  );
-}
 
 /** 激活区块：状态、码输入、托管信息与解绑都在这里，不散落到设置表单。 */
 export function ActivationSection(): React.ReactElement {
@@ -91,7 +62,7 @@ export function ActivationSection(): React.ReactElement {
           </div>
         )}
         {snapshot !== null && status !== 'active' && (
-          <CodeEntry busy={view.busy} onRedeem={view.redeem} />
+          <ActivationCodeEntry busy={view.busy} onRedeem={view.redeem} />
         )}
         {snapshot !== null && status !== 'inactive' && (
           <div style={{ display: 'flex', gap: tokens.spaceSm }}>
