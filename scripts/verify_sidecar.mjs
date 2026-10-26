@@ -118,7 +118,12 @@ async function main() {
     stdio: ['ignore', 'inherit', 'inherit'],
   });
   childProcesses.push(child);
-  await new Promise((r) => setTimeout(r, 8000)); // onedir 冷启动
+  // onedir 在冷盘/杀软扫描下启动时间不固定，等实际握手而不是赌固定 8 秒。
+  const readyDeadline = Date.now() + 30_000;
+  while (send === null && Date.now() < readyDeadline) {
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  if (send === null) throw new Error('sidecar 30 秒内未完成握手');
 
   const ping = await rpc('system.ping');
   check('system.ping', typeof ping.service_version === 'string', ping.service_version);
