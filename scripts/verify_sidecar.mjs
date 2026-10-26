@@ -138,12 +138,16 @@ async function main() {
   check('主包零 torch 系（E-2）', torchLeftovers.length === 0,
     torchLeftovers.length ? `仍存在: ${torchLeftovers.join(', ')}` : '_internal 无 torch 系目录');
 
-  const video = makeSampleVideo(work);
-  const project = await rpc('project.create', { name: 'sidecar-smoke', source_path: work });
-  await rpc('project.scan_episodes', { project_id: project.id });
-  const prescreen = await rpc('analysis.prescreen', { project_id: project.id });
-  const job = await waitJob(prescreen.job_id, 120000);
-  check('analysis.prescreen（ffmpeg+引擎链）', job.status === 'completed', `status=${job.status}`);
+  if (process.env.DRAMACLIP_SIDECAR_CORE_ONLY === '1') {
+    console.log('  - analysis.prescreen 已跳过（core-only：激活前无法走云端识别）');
+  } else {
+    makeSampleVideo(work);
+    const project = await rpc('project.create', { name: 'sidecar-smoke', source_path: work });
+    await rpc('project.scan_episodes', { project_id: project.id });
+    const prescreen = await rpc('analysis.prescreen', { project_id: project.id });
+    const job = await waitJob(prescreen.job_id, 120000);
+    check('analysis.prescreen（ffmpeg+引擎链）', job.status === 'completed', `status=${job.status}`);
+  }
 
   const shutdown = await rpc('system.shutdown');
   check('system.shutdown', shutdown.ok === true);
