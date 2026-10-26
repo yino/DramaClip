@@ -35,7 +35,8 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Build Python sidecar
-        run: npm run dist:service
+        shell: pwsh
+        run: .\.venv\Scripts\python.exe .\scripts\build-service.py
 
       - name: Smoke-test Python sidecar
         run: node scripts/verify_sidecar.mjs
