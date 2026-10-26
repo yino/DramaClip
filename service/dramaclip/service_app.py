@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import sqlite3
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -32,6 +33,14 @@ from dramaclip.transport.rpc import (
 _STOP_POLL_SECONDS = 1.0
 
 
+def _force_utf8_stdio() -> None:
+    """冻结版在西方语言 Windows 上默认可能是 cp1252，中文日志不应令服务崩溃。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 class ServiceApp:
     """单实例服务。run() 阻塞直到 shutdown/EOF/SIGTERM，返回进程退出码。"""
 
@@ -45,6 +54,7 @@ class ServiceApp:
         self._connection: ServiceConnection | None = None
 
     def run(self) -> int:
+        _force_utf8_stdio()
         data_dir = paths.resolve_data_dir(self._data_dir_env)
         try:
             backup.backup_database(paths.db_path(data_dir))
