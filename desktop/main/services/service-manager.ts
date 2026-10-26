@@ -182,6 +182,7 @@ export class ServiceManager {
       PYTHONUNBUFFERED: '1',
       // Windows 英语/西欧系统上 stdout 可能是 cp1252；服务启动日志含中文。
       PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
     };
     this.child = spawn(target.command, [...target.args], {
       cwd: this.options.cwd,

@@ -113,6 +113,7 @@ async function main() {
       DRAMACLIP_RESOURCES_DIR: path.join(repoRoot, 'resources'),
       PYTHONUNBUFFERED: '1',
       PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
     },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
