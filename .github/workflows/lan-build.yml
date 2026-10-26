@@ -34,6 +34,11 @@ jobs:
       - name: Install desktop dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Download Electron runtime
+        run: node node_modules/electron/install.js
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
       - name: Build Python sidecar
         shell: pwsh
         env:
