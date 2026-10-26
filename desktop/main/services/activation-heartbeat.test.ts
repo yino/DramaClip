@@ -21,6 +21,8 @@ const FAILURE: AuthorizationOutcome = { kind: 'failure' };
 const DISABLED: AuthorizationOutcome = { kind: 'disabled' };
 const EXPIRED: AuthorizationOutcome = { kind: 'expired' };
 
+const REVOKED: AuthorizationOutcome = { kind: 'unauthorized', code: 'token_revoked' };
+
 interface Harness {
   readonly hb: ActivationHeartbeat;
   readonly verify: ReturnType<typeof vi.fn<() => Promise<AuthorizationOutcome>>>;
@@ -123,12 +125,15 @@ describe('状态机：inactive → verifying → active', () => {
 });
 
 describe('401 分流', () => {
-  it('token_superseded：直接 suspended(device_conflict)，绝不重兑换', async () => {
+  it('token_superseded：直接 reactivation_required(device_conflict)，绝不重兑换', async () => {
     const h = harness({ verify: SUPERSEDED });
     h.hb.start();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(h.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'device_conflict' });
+    expect(h.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'device_conflict',
+    });
     expect(h.redeem).not.toHaveBeenCalled();
     expect(h.canRedeem).not.toHaveBeenCalled();
   });
@@ -144,12 +149,15 @@ describe('401 分流', () => {
     expect(h.hb.getSnapshot()).toMatchObject({ status: 'active', plan: 'team', reason: null });
   });
 
-  it('invalid_token 但守卫不允许：suspended(invalid_token)，不重兑换', async () => {
+  it('invalid_token 但守卫不允许：reactivation_required(invalid_token)，不重兑换', async () => {
     const h = harness({ verify: INVALID, canRedeem: false });
     h.hb.start();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(h.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'invalid_token' });
+    expect(h.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'invalid_token',
+    });
     expect(h.redeem).not.toHaveBeenCalled();
   });
 
@@ -164,17 +172,33 @@ describe('401 分流', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     const snapshot = await h.hb.recheck();
 
-    expect(snapshot).toMatchObject({ status: 'suspended', reason: 'device_conflict' });
+    expect(snapshot).toMatchObject({ status: 'reactivation_required', reason: 'device_conflict' });
     expect(h.redeem).not.toHaveBeenCalled();
   });
 
-  it('重兑换返回 token_superseded：按 device_conflict 暂停', async () => {
+  it('token_revoked：不重兑换，直接 reactivation_required(token_revoked)', async () => {
+    const h = harness({ verify: REVOKED });
+    h.hb.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'token_revoked',
+    });
+    expect(h.redeem).not.toHaveBeenCalled();
+    expect(h.canRedeem).not.toHaveBeenCalled();
+  });
+
+  it('重兑换返回 token_superseded：reactivation_required(device_conflict)', async () => {
     const h = harness({ verify: INVALID, redeem: SUPERSEDED });
     h.hb.start();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(h.redeem).toHaveBeenCalledTimes(1);
-    expect(h.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'device_conflict' });
+    expect(h.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'device_conflict',
+    });
   });
 });
 
@@ -205,16 +229,26 @@ describe('失败退避与恢复', () => {
     expect(h.hb.getSnapshot()).toMatchObject({ status: 'active', reason: null, plan: 'pro' });
   });
 
-  it('403 语义：disabled / expired 各自映射到暂停原因', async () => {
+  it('403 语义：disabled / expired 进入强制重授权，不再安排心跳', async () => {
     const disabled = harness({ verify: DISABLED });
     disabled.hb.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(disabled.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'disabled' });
+    expect(disabled.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'disabled',
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(disabled.verify).toHaveBeenCalledTimes(1);
 
     const expired = harness({ verify: EXPIRED });
     expired.hb.start();
     await vi.advanceTimersByTimeAsync(0);
-    expect(expired.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'expired' });
+    expect(expired.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'expired',
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(expired.verify).toHaveBeenCalledTimes(1);
   });
 
   it('verify 抛异常：按网络失败暂停（不崩）', async () => {
@@ -224,6 +258,43 @@ describe('失败退避与恢复', () => {
     h.hb.start();
     await vi.advanceTimersByTimeAsync(0);
     expect(h.hb.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'network' });
+  });
+});
+
+describe('强制重授权', () => {
+  it('markReactivationRequired：停表、保留原因，resume/recheck/start 都不再发请求', async () => {
+    const h = harness({ verify: OK });
+    h.hb.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.hb.getSnapshot().status).toBe('active');
+
+    h.hb.markReactivationRequired('token_revoked');
+    expect(h.hb.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'token_revoked',
+    });
+
+    h.hb.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    const snapshot = await h.hb.recheck();
+    h.hb.start();
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(snapshot.status).toBe('reactivation_required');
+    expect(h.verify).toHaveBeenCalledTimes(1);
+  });
+
+  it('reactivation_required → 重新激活 markActivated 可回到 active 并恢复心跳', async () => {
+    const h = harness({ verify: OK });
+    h.hb.start();
+    await vi.advanceTimersByTimeAsync(0);
+    h.hb.markReactivationRequired('disabled');
+
+    h.hb.markActivated('pro', '2027-01-01T00:00:00Z');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.hb.getSnapshot()).toMatchObject({ status: 'active', reason: null });
+    expect(h.verify).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -117,3 +117,53 @@ it('暂停态不阻断（断网时仍可用本地能力）', async () => {
   expect(await screen.findByTestId('app-shell')).toBeTruthy();
   expect(screen.queryByText('激活 DramaClip')).toBeNull();
 });
+
+it('强制重授权：阻断主界面，标题为重新激活，且无忽略/稍后入口', async () => {
+  api.status.mockResolvedValue({
+    ...ACTIVE,
+    status: 'reactivation_required',
+    reason: 'token_revoked',
+    deactivatedAt: '2026-10-24T07:00:00Z',
+  });
+  renderGate();
+
+  expect(await screen.findByText('重新激活 DramaClip')).toBeTruthy();
+  expect(screen.getByText('此设备的授权已被吊销，请重新输入激活码。')).toBeTruthy();
+  expect(screen.queryByTestId('app-shell')).toBeNull();
+  expect(screen.getByPlaceholderText('输入激活码（8–128 个字符）')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /忽\s*略|稍\s*后/u })).toBeNull();
+});
+
+it.each([
+  ['disabled', '激活码已被停用，请输入新的激活码。'],
+  ['expired', '激活码已到期，请输入新的激活码。'],
+  ['device_conflict', '该激活码已在其他设备使用，请重新激活。'],
+  ['invalid_token', '授权凭证已失效，请重新输入激活码。'],
+] as const)('强制重授权原因 %s 显示对应说明', async (reason, text) => {
+  api.status.mockResolvedValue({
+    ...ACTIVE,
+    status: 'reactivation_required',
+    reason,
+    deactivatedAt: '2026-10-24T07:00:00Z',
+  });
+  renderGate();
+  expect(await screen.findByText(text)).toBeTruthy();
+});
+
+it('强制重授权下重新兑换成功：门禁消失并进入应用', async () => {
+  api.status.mockResolvedValue({
+    ...ACTIVE,
+    status: 'reactivation_required',
+    reason: 'expired',
+    deactivatedAt: '2026-10-24T07:00:00Z',
+  });
+  api.redeem.mockResolvedValue({ ok: true, snapshot: ACTIVE });
+  renderGate();
+
+  fireEvent.change(await screen.findByPlaceholderText('输入激活码（8–128 个字符）'), {
+    target: { value: 'DC-NEW1-BBBB-CCCC-DDDD' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /重新激\s*活|激\s*活/ }));
+  expect(await screen.findByTestId('app-shell')).toBeTruthy();
+  expect(api.redeem).toHaveBeenCalledWith('DC-NEW1-BBBB-CCCC-DDDD');
+});

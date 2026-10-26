@@ -24,6 +24,14 @@
         "source_path": {
           "type": "string"
         },
+        "source_kind": {
+          "type": "string",
+          "description": "来源类型：folder=整目录扫描，files=多选文件，mixed=目录项目又追加了外部文件。缺省 = 旧服务/旧数据，按 folder 处理"
+        },
+        "source_root": {
+          "type": "string",
+          "description": "来源展示根：目录项目=目录，文件项目=所选文件公共父目录（跨目录为空串，界面显示「多个位置」），mixed=原目录。缺省 = 旧服务未供数，回退 source_path"
+        },
         "status": {
           "type": "string"
         },
@@ -131,6 +139,30 @@
           "type": "boolean"
         }
       }
+    },
+    "SkippedFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "reason"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "用户所选的那条路径（原样回显，便于界面定位）"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "unreadable",
+            "unsupported",
+            "duplicate",
+            "probe_failed"
+          ],
+          "description": "跳过原因：不存在/不可读/扩展名不支持/与已导入素材重复/探测失败（能打开但读不出媒体信息）"
+        }
+      }
     }
   },
   "x-methods": [
@@ -154,6 +186,55 @@
       },
       "result": {
         "$ref": "#/x-models/Project"
+      }
+    },
+    {
+      "name": "project.create_from_files",
+      "summary": "多选文件创建项目（只登记所选文件：不扫所在目录、不复制源文件；无效/重复计入 skipped）",
+      "params": {
+        "type": "object",
+        "required": [
+          "name",
+          "files"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "项目名（界面按公共父目录名预填；跨目录取第一个所选文件的父目录名）"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "用户多选的文件路径。不存在/不可读/扩展名不支持/重复选中/探测失败的文件跳过并计入 skipped；全部无效返回 -32103 且不建项目"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "project",
+          "episodes",
+          "skipped"
+        ],
+        "properties": {
+          "project": {
+            "$ref": "#/x-models/Project"
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/x-models/Episode"
+            }
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/x-models/SkippedFile"
+            }
+          }
+        }
       }
     },
     {
@@ -349,6 +430,56 @@
         "type": "array",
         "items": {
           "$ref": "#/x-models/ScannedEpisode"
+        }
+      }
+    },
+    {
+      "name": "project.add_episodes",
+      "summary": "给既有项目追加素材（不替换、不重编号、不自动分析；分析/预筛进行中返回 -32105）",
+      "params": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "files"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "同 create_from_files 的校验口径；与项目已有素材（规范化绝对路径）重复的计入 skipped"
+          }
+        }
+      },
+      "result": {
+        "type": "object",
+        "required": [
+          "added",
+          "skipped",
+          "episodes"
+        ],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "description": "本次新增集数（编号从追加前 MAX(episode_number)+1 起，既有集号与自定义名不变）"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/x-models/SkippedFile"
+            }
+          },
+          "episodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/x-models/Episode"
+            },
+            "description": "仅本次新增的集（带新编号）；全部无效/重复时空数组且项目素材不变"
+          }
         }
       }
     },

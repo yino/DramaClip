@@ -10,7 +10,7 @@ import { mixins } from '../../styles/mixins';
 import { layout, tokens } from '../../styles/theme';
 import { buildSections, type DynamicOptions, type FieldSpec, type SectionSpec, type SettingsMap } from './sections';
 
-const PAGE_DESC = '分析阈值、字幕与出片参数；LLM/ASR/TTS 引擎配置在「引擎中心」管理。';
+const PAGE_DESC = '分析阈值、字幕与出片参数；引擎由应用自动准备。';
 
 interface Notify {
   error: (text: string) => void;

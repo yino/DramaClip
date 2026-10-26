@@ -62,9 +62,10 @@ engines 不直接持有 Notifier——api 层包装为 `ProgressReporter` 注入
 ```
 api/__init__.py     build_router(context, shutdown) 组装全部命名空间（唯一 import 点）
 api/system.py       ping / health / shutdown                              （3）
-api/project.py      create / list / get / delete / rename / duplicate /
-                    scan_episodes / dashboard_summary / ensure_covers /
-                    reorder_episodes / update_settings                   （11）
+api/project.py      create / create_from_files / add_episodes / list / get /
+                    delete / rename / duplicate / scan_episodes /
+                    dashboard_summary / ensure_covers / reorder_episodes /
+                    update_settings                                     （13）
 api/analysis.py     prescreen / start / status / cancel / results /
                     resync_semantic / update_asr                          （7）
 api/narration.py    plan_variants / list_plans / get_plan / list_styles / （6）
@@ -80,6 +81,7 @@ api/models.py       list / download / clean_residue / clean_orphan /      （16�
 api/settings.py     get / update                                          （2）
 api/engine_configs.py  create / list / update / delete / enable / test    （6）
 api/jobs.py         list / get / cancel                                   （3）
+api/asr.py          credits                                              （1）
 api/prompts.py      list / save / reset                                   （3）
 api/tts.py          preview                                               （1）
 api/engines.py      selftest / selftest_results                           （2）
@@ -87,10 +89,10 @@ api/engines.py      selftest / selftest_results                           （2�
                       与 api/analysis.py 同属 analysis 命名空间）
 ```
 
-**合计 69 个方法**（2026-09-24 以 `protocol/schemas/*.json` 的 `x-methods` 数出；
+**合计 72 个方法**（2026-09-24 以 `protocol/schemas/*.json` 的 `x-methods` 数出；
 `tests/transport/test_contract_sync.py` 保证 schema ↔ Router ↔ `protocol/ts` 三面同步，
 所以这三处的数不会各说各话）。
-命名空间分布：`project` 11、`analysis` 7、`engine_configs` 6、`export` 4、`models` 4、
+命名空间分布：`project` 13、`analysis` 7、`engine_configs` 6、`export` 4、`models` 4、`asr` 1、
 `narration` 4、`jobs` 3、`settings` 3、`system` 3、`subtitle` 1。
 
 「文件 = 命名空间」**当前无例外**。历史上唯一的例外是 `api/timeline.py`——它的实现文件
@@ -156,3 +158,12 @@ request: analysis.start {project_id, episode_ids}
   running）、`episodes_repo.reset_stale_analyzing()`（分析中集）、`exports_repo.reset_stale_pending()`
   （pending 导出）三者任一非零即打 stdout 并 `log.append` 一条 warn，文案含全部三项计数。
   注意 `sweep_interrupted` 只扫 `running`——这正是上面那条 `mark_running` 纪律必须守住的原因。
+
+
+## 7. 项目导入 / 追加素材 / 云端识别（2026-10 追加）
+
+- `project.create_from_files {name, files}`：引用原文件、不复制；`source_path = "files:"+uuid`，`source_kind="files"`，`source_root` 为公共父目录（跨目录为空）；只导入所选文件，不扫同目录未选项。
+- `project.add_episodes {project_id, files}`：追加到现有项目，编号从现有最大集号 +1；`folder` 项目变 `mixed` 并保留 `source_root`；不自动分析；分析中调用返回 `-32105`。
+- 错误码：`-32102` 目录/来源校验失败；`-32103` 没有有效视频文件；`-32105` 正在分析/导入，稍后再试；`-32205` 云端识别未就绪或积分不足；`-32206` 目标集源文件缺失（分析前预检）。
+- `asr.credits`：只读查询网关积分，返回 `{available, limit, used, remaining, unit, updated_at, reason?}`；未配置/401/403/网络失败返回 `available=false`，不抛堆栈、不泄露设备令牌。
+- 分析前预检：`asr.engine=cloud_gateway` 时缺 `asr.base_url/api_key` 或积分明确为 0 抛 `-32205`；积分查询失败不阻断，避免网络抖动误判。

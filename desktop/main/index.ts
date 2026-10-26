@@ -12,7 +12,13 @@ import {
 import { ActivationService } from './services/activation-service';
 import { ActivationStore, ACTIVATION_FILE_NAME } from './services/activation-store';
 import { GatewayUrlError, resolveGatewayUrl } from './services/gateway-client';
-import { createPreviewHandler, createPreviewRoots } from './services/preview-protocol';
+import {
+  collectPreviewRoots,
+  createPreviewHandler,
+  createPreviewRoots,
+  type PreviewEpisode,
+  type PreviewProject,
+} from './services/preview-protocol';
 import { ServiceManager, type ServiceManagerOptions } from './services/service-manager';
 
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -196,12 +202,13 @@ function registerLifecycle(): void {
       : devDataDir();
     const getPreviewRoots = createPreviewRoots(async () => {
       if (manager === null) return [];
-      const projects = (await manager.rpc('project.list', {})) as readonly {
-        source_path?: unknown;
-      }[]; // 受信 sidecar 边界：形状由 protocol 契约钳制
-      return projects
-        .map((project) => project.source_path)
-        .filter((value): value is string => typeof value === 'string' && value !== '');
+      const projects = (await manager.rpc('project.list', {})) as readonly PreviewProject[];
+      return collectPreviewRoots(projects, async (projectId) => {
+        const detail = (await manager?.rpc('project.get', { project_id: projectId })) as
+          | { episodes?: readonly PreviewEpisode[] }
+          | undefined;
+        return detail?.episodes ?? [];
+      });
     }, previewDataRoot);
     protocol.handle('dramaclip', createPreviewHandler(getPreviewRoots));
     void bootstrap();

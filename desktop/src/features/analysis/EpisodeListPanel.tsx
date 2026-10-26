@@ -22,6 +22,10 @@ interface ListProps {
   onDragStart: (index: number) => void;
   onDrop: (index: number) => void;
   onMove: (index: number, direction: -1 | 1) => void;
+  /** 素材页“新增素材”入口；未接线时不渲染按钮（WorkbenchPage 负责注入）。 */
+  onAddMaterial?: () => void;
+  /** 选择/追加进行中：与分析中一样禁止再次进入。 */
+  adding?: boolean;
 }
 
 /** 剧集素材列表（按手动/智能顺序渲染）。 */
@@ -40,6 +44,8 @@ export function EpisodeListPanel(props: ListProps): React.ReactElement {
           props.orderedIds.length > 0 && props.selectedIds.length === props.orderedIds.length
         }
         running={props.running}
+        onAddMaterial={props.onAddMaterial}
+        adding={props.adding ?? false}
         onToggleAll={(checked) => {
           props.orderedIds.forEach((id) => {
             props.onToggle(id, checked);
@@ -148,10 +154,14 @@ function NoAudioAlert({ missing }: { missing: readonly Episode[] }): React.React
 function ListHeader({
   allChecked,
   running,
+  onAddMaterial,
+  adding,
   onToggleAll,
 }: {
   allChecked: boolean;
   running: boolean;
+  onAddMaterial: (() => void) | undefined;
+  adding: boolean;
   onToggleAll: (checked: boolean) => void;
 }): React.ReactElement {
   return (
@@ -165,11 +175,23 @@ function ListHeader({
         <span style={{ fontSize: tokens.text.badge.size, lineHeight: tokens.text.badge.leading, color: tokens.textTertiary }}>全选</span>
       </Checkbox>
       <span style={{ fontSize: tokens.text.badge.size, lineHeight: tokens.text.badge.leading, color: tokens.textTertiary }}>拖拽行可调顺序</span>
-      {running && (
-        <Button size="small" type="primary" style={{ marginLeft: 'auto' }} loading>
-          分析中
-        </Button>
-      )}
+      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: tokens.spaceSm }}>
+        {onAddMaterial !== undefined && (
+          <Button
+            size="small"
+            loading={adding}
+            disabled={running || adding}
+            onClick={onAddMaterial}
+          >
+            新增素材
+          </Button>
+        )}
+        {running && (
+          <Button size="small" type="primary" loading>
+            分析中
+          </Button>
+        )}
+      </span>
     </div>
   );
 }

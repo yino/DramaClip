@@ -604,6 +604,7 @@ dependencies = [
     { name = "jieba" },
     { name = "pydantic" },
     { name = "pypinyin" },
+    { name = "requests" },
 ]
 
 [package.optional-dependencies]
@@ -641,6 +642,7 @@ requires-dist = [
     { name = "pypinyin", specifier = ">=0.53" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "rapidocr", marker = "extra == 'ml'", specifier = ">=3.10" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "scenedetect", marker = "extra == 'ml'", specifier = ">=0.7" },
     { name = "soundfile", marker = "extra == 'ml'", specifier = ">=0.13" },

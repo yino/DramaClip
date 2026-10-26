@@ -13,6 +13,9 @@ def defects(plan: PlanData) -> list[str]:
     issues: list[str] = []
     if not plan.timeline:
         return ["空时间轴"]
+    # 规划期已知道放不下的（如素材太短），先说这句人话；时间轴细节留作后续缺陷。
+    if plan.planning_issue:
+        issues.append(plan.planning_issue)
     first = plan.timeline[0]
     if first.end - first.start < 0.5:
         issues.append("开场不足半秒，钩子站不住")

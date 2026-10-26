@@ -1,5 +1,4 @@
 /** 工作台待办派生：纯函数，不发 RPC。 */
-import type { ModelInfo } from '@dramaclip/protocol';
 
 export interface TodoAction {
   readonly kind: 'navigate' | 'restart-service';
@@ -32,8 +31,6 @@ export interface FailedJob {
 
 export interface TodoInput {
   readonly serviceDown: boolean;
-  readonly models: readonly ModelInfo[] | null;
-  readonly llmConfigured: boolean;
   readonly dramas: readonly DramaState[];
   readonly failedJobs: readonly FailedJob[];
   /** jobs.list 是否取到。取不到 = 在跑条数与失败待办双双不可用，必须说出来。 */
@@ -79,26 +76,8 @@ export function buildTodos(input: TodoInput): TodoItem[] {
     });
   }
 
-  if (input.models !== null) {
-    const missing = input.models.filter((m) => m.required && m.status !== 'installed');
-    if (missing.length > 0) {
-      items.push({
-        key: 'models', text: `推荐模型未安装：${missing.map((m) => m.name).join('、')}`,
-        severity: 'warning',
-        action: { kind: 'navigate', label: '去下载', path: '/engines/asr' },
-      });
-    }
-  }
-
-  if (!input.llmConfigured) {
-    items.push({
-      key: 'llm',
-      text: 'LLM 未配置：七个解说模式不会产出方案',
-      detail: '仅「纯原片剪辑」「字幕金句流」不依赖编剧模型；分析层改用关键词打分',
-      severity: 'error',
-      action: { kind: 'navigate', label: '去配置', path: '/engines/llm' },
-    });
-  }
+  // 工作台不展示模型/引擎就绪度：装模型、配 LLM 的入口只在引擎中心与设置，
+  // 不再作为待办出现在这里（规格 desktop-workbench「工作台不展示模型与环境信息」）。
 
   for (const job of input.failedJobs) {
     const sub = JOB_ROUTES[job.type];

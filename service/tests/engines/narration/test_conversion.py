@@ -136,6 +136,19 @@ def test_end_before_start_is_a_defect() -> None:
     assert any("结束不晚于开始" in issue for issue in defects(plan))
 
 
+def test_planning_issue_is_the_first_gate_reason() -> None:
+    """规划期已知的不可出片原因（如素材太短）排在第一：方案卡显示的是这句
+    可操作的人话，而不是后续的时间轴细节。"""
+    timeline, texts = _good_tail()
+    plan = PlanData(
+        mode="full_narration",
+        timeline=timeline,
+        narration_texts=texts,
+        planning_issue="素材太短：需要场景前 30s 钩子画面",
+    )
+    assert defects(plan)[0].startswith("素材太短")
+
+
 def test_overlap_within_episode_is_a_defect_for_llm_timelines() -> None:
     """dialogue_narration（唯一 LLM 产时间轴的模式）同集两段画面区间重叠＝
     成片重播同一段素材（业主立案③），门禁必须拦。"""

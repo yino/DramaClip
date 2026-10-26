@@ -8,7 +8,15 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import type { ActivationSuspendedReason } from '@dramaclip/protocol';
+
 export const ACTIVATION_FILE_NAME = 'activation.json';
+
+/** 强制重授权标记：原因 + 生效时间（ISO 8601），用于重启后继续阻断。 */
+export interface ActivationDeactivated {
+  readonly reason: ActivationSuspendedReason;
+  readonly at: string;
+}
 
 /** 激活凭证（码、令牌、套餐、到期、最近校验、设备标识）。 */
 export interface ActivationRecord {
@@ -21,6 +29,7 @@ export interface ActivationRecord {
   readonly activatedAt: string;
   readonly lastVerifiedAt: string;
   readonly deviceLabel: string;
+  readonly deactivated?: ActivationDeactivated;
 }
 
 /** safeStorage 的最小依赖面：便于单测注入假实现，模块本身不直接依赖 electron。 */
@@ -63,19 +72,43 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value !== '';
 }
 
-/** 严格校验字段形状：缺字段/类型不对的凭证一律视为无效（不猜测）。 */
+const SUSPENDED_REASONS: ReadonlySet<string> = new Set<ActivationSuspendedReason>([
+  'network',
+  'invalid_token',
+  'device_conflict',
+  'expired',
+  'disabled',
+  'token_revoked',
+]);
+
+function isDeactivated(value: unknown): value is ActivationDeactivated {
+  return (
+    isRecordLike(value) &&
+    typeof value.reason === 'string' &&
+    SUSPENDED_REASONS.has(value.reason) &&
+    isNonEmptyString(value.at)
+  );
+}
+
+/** 严格校验字段形状：缺字段/类型不对的凭证一律视为无效（不猜测）。
+ *
+ * 强制重授权状态下 token/tokenId 会被清空，但 `deactivated` 必须存在，
+ * 否则重启后退化成「从未激活」，丢失原因与再次激活入口。
+ */
 function isActivationRecord(value: unknown): value is ActivationRecord {
   if (!isRecordLike(value)) return false;
+  if (!isNonEmptyString(value.code)) return false;
+  if (!isNonEmptyString(value.token) && !isDeactivated(value.deactivated)) return false;
   return (
     typeof value.gatewayUrl === 'string' &&
-    isNonEmptyString(value.code) &&
-    isNonEmptyString(value.token) &&
+    typeof value.token === 'string' &&
     typeof value.tokenId === 'string' &&
     typeof value.plan === 'string' &&
     typeof value.expiresAt === 'string' &&
     typeof value.activatedAt === 'string' &&
     typeof value.lastVerifiedAt === 'string' &&
-    typeof value.deviceLabel === 'string'
+    typeof value.deviceLabel === 'string' &&
+    (value.deactivated === undefined || isDeactivated(value.deactivated))
   );
 }
 

@@ -5,7 +5,7 @@ describe('导轨清单', () => {
   it('分两组', () => {
     expect(NAV_GROUPS).toEqual(['loop', 'config']);
     expect(navByGroup('loop').map((item) => item.label)).toEqual(['工作台', '项目', '成品', '工具箱']);
-    expect(navByGroup('config').map((item) => item.label)).toEqual(['引擎', '设置', '关于']);
+    expect(navByGroup('config').map((item) => item.label)).toEqual(['设置']);
   });
 
   it('上组全部排在下组之前', () => {
@@ -45,11 +45,11 @@ describe('命中判定', () => {
     expect(isNavActive(home, '/settings')).toBe(false);
   });
 
-  it('引擎深链保持高亮', () => {
-    const engines = byPath('/engines');
-    expect(isNavActive(engines, '/engines')).toBe(true);
-    expect(isNavActive(engines, '/engines/llm')).toBe(true);
-    expect(isNavActive(engines, '/engines/asr')).toBe(true);
+  it('引擎页与关于页不再占用导航高亮', () => {
+    expect(NAV_ITEMS.some((item) => item.path === '/engines')).toBe(false);
+    expect(NAV_ITEMS.filter((item) => isNavActive(item, '/engines/llm'))).toHaveLength(0);
+    expect(NAV_ITEMS.some((item) => item.path === '/about')).toBe(false);
+    expect(NAV_ITEMS.filter((item) => isNavActive(item, '/about'))).toHaveLength(0);
   });
 
   it('进单剧详情保持「项目」高亮', () => {
@@ -65,7 +65,7 @@ describe('命中判定', () => {
   });
 
   it('任一时刻至多一项命中', () => {
-    const paths = ['/', '/projects', '/projects/a/analysis', '/works', '/engines/llm', '/settings'];
+    const paths = ['/', '/projects', '/projects/a/analysis', '/works', '/settings'];
     for (const pathname of paths) {
       const hits = NAV_ITEMS.filter((item) => isNavActive(item, pathname));
       expect(hits.length, `${pathname} 命中 ${String(hits.length)} 项`).toBe(1);

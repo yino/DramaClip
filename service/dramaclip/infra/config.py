@@ -21,8 +21,12 @@ DEFAULTS: dict[str, str] = {
     "analysis.full_threshold": "15",
     "analysis.prescreen_threshold": str(PRESCREEN_THRESHOLD),
     "analysis.ocr_enabled": "1",
-    "asr.engine": "faster_whisper",
-    "asr.model": "small",  # paraformer 用户曾切；默认档见引擎页推荐卡
+    # 默认走激活网关的云端识别（D1）：桌面端只持设备令牌，音频分片直传临时存储，
+    # 供应商 Key 不下发。本地 faster_whisper/funasr 与旧 dashscope_cloud（自带 Key）
+    # 仍在 supported() 里，业主手动切回即生效，不做静默回退。
+    "asr.engine": "cloud_gateway",
+    # 网关只收两个别名：fun-asr-flash（默认，无说话人）/ qwen-audio-3.1-asr-flash
+    "asr.model": "fun-asr-flash",
     # 设备选择：faster-whisper（auto=ctranslate2 按设备挑精度档）与 funasr 双引擎
     # （auto=torch.cuda 探测，CUDA 初始化失败自动回退 CPU）共用这一个键
     "asr.device": "auto",
@@ -39,7 +43,10 @@ DEFAULTS: dict[str, str] = {
     # 人工热词兜底（顿号/逗号/空格分隔）：挖掘表是 OCR 派生的，会漏生僻人名
     # 也会把 OCR 错字当热词——业主点名的专名永远排最前（骆养性、王之心 这类）
     "asr.hotwords_extra": "",
-    # P1 云端引擎凭据（按量计费；空 = 云端引擎不可用，本地引擎不受影响）
+    # 激活网关地址（含 /v1）：激活流程写入；空 = 云端识别不可用，本地引擎不受影响。
+    # 与 llm.base_url 同源同形，但刻意不共键——业主切本地 ASR 时不该顺手废掉 LLM。
+    "asr.base_url": "",
+    # 网关设备令牌（不是供应商 Key）：空 = 云端识别不可用，本地引擎不受影响
     "asr.api_key": "",
     "tts.api_key": "",
     # 云端 TTS 模型名：tts_cloud 域启用即由 engine_configs 镜像写入（同 llm.model）。
@@ -47,7 +54,7 @@ DEFAULTS: dict[str, str] = {
     "tts.model": "",
     # 说话人分离三态：auto=有通道的引擎才做（paraformer、云端 qwen-audio-3.1 系），
     # true=强制（做不到的引擎直接失败，不静默丢标签），其余=关。默认不能写 true：
-    # 默认引擎 faster_whisper 没有说话人通道，写成真是许一个必然落空的效果。
+    # 默认引擎 cloud_gateway/fun-asr-flash 没有说话人通道，写成真是许一个必然落空的效果。
     # num_speakers>0 经 preset_spk_num 指定人数，0 交给聚类自动估（1~15 人）。
     "asr.diarization": "auto",
     "asr.num_speakers": "0",

@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from dramaclip.api import tools_media
 from dramaclip.api.context import AppContext
 from dramaclip.engines.analysis import fusion, subtitle_ocr
 from dramaclip.engines.analysis.models import OcrSegment
@@ -95,14 +96,17 @@ def _run_extract(context: AppContext, job_id: str, media_path: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     want_ocr = not _is_audio(media_path)
     try:
-        context.notifier.progress(job_id, 5, "提取音频")
-        wav_path = out_dir / f"{media_path.stem}.wav"
-        extract_audio(media_path, wav_path)
+        has_audio = tools_media.inspect_video_source(media_path) if want_ocr else True
+        asr_segments = []
+        if has_audio:
+            context.notifier.progress(job_id, 5, "提取音频")
+            wav_path = out_dir / f"{media_path.stem}.wav"
+            extract_audio(media_path, wav_path)
 
-        context.notifier.progress(job_id, 20, "ASR 转写")
-        transcriber = context.analysis_runtime.transcriber()
-        language = str(context.settings.get("asr.language") or "zh")
-        asr_segments = transcriber.transcribe(wav_path, language=language)
+            context.notifier.progress(job_id, 20, "ASR 转写")
+            transcriber = context.analysis_runtime.transcriber()
+            language = str(context.settings.get("asr.language") or "zh")
+            asr_segments = transcriber.transcribe(wav_path, language=language)
         duration = _media_duration_s(media_path)
 
         ocr_segments: list[OcrSegment] = []
@@ -113,7 +117,13 @@ def _run_extract(context: AppContext, job_id: str, media_path: Path) -> None:
             )
 
         context.notifier.progress(job_id, 75, "文本融合（ASR × 硬字幕）")
-        lines = fusion.fuse(asr_segments, ocr_segments)
+        lines = (
+            fusion.fuse(asr_segments, ocr_segments)
+            if asr_segments
+            else tools_media.ocr_only_lines(ocr_segments)
+        )
+        if not lines:
+            raise ValueError("视频没有音轨，也未识别到硬字幕；请重新下载或更换文件")
 
         text = "\n".join(segment.text.strip() for segment in lines if segment.text.strip())
         srt = _format_srt(lines)

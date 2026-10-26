@@ -22,8 +22,21 @@ export function ExportsCard({ exports }: { exports: ExportJob[] | null }) {
   );
 }
 
+const pad2 = (value: number): string => String(value).padStart(2, '0');
+
+/** 出片列表的本地时间：已完成取完成时间，进行中/失败回退创建时间（标注「开始」）。 */
+function formatExportWhen(job: ExportJob): { text: string; title: string } {
+  const ms = job.completed_at ?? job.created_at;
+  const date = new Date(ms);
+  const short = `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const full = `${String(date.getFullYear())}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+  if (job.completed_at === undefined) return { text: `开始 ${short}`, title: `创建于 ${full}` };
+  return { text: short, title: `完成于 ${full}` };
+}
+
 function ExportRow({ job }: { job: ExportJob }) {
   const navigate = useNavigate();
+  const when = formatExportWhen(job);
   const label = job.status === 'completed' ? '完成' : job.status === 'failed' ? '失败' : '进行中';
   const color = job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'processing';
   return (
@@ -49,8 +62,11 @@ function ExportRow({ job }: { job: ExportJob }) {
         </Tooltip>
       ) : null}
       <span style={{ color: tokens.textPrimary }}>{modeLabel(job.narration_mode)}</span>
-      <span style={{ marginLeft: 'auto', fontSize: tokens.text.meta.size, lineHeight: tokens.text.meta.leading, fontFamily: tokens.fontFamilyMono, color: tokens.textTertiary }}>
-        {job.duration_s !== undefined ? `${String(Math.round(job.duration_s))}s` : ''}
+      <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: tokens.spaceMd, fontFamily: tokens.fontFamilyMono, fontSize: tokens.text.meta.size, lineHeight: tokens.text.meta.leading }}>
+        <span title={when.title} style={{ color: tokens.textSecondary }}>
+          {when.text}
+        </span>
+        <span style={{ color: tokens.textTertiary }}>{job.duration_s !== undefined ? `${String(Math.round(job.duration_s))}s` : ''}</span>
       </span>
     </div>
   );

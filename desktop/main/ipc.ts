@@ -11,7 +11,7 @@ import {
   type RevealResult,
   type ServiceEvent,
 } from '@dramaclip/protocol';
-import { pickAudioFile, pickFolder, pickVideoFile, saveTextFile } from './services/dialog';
+import { pickAudioFile, pickFolder, pickVideoFile, pickVideoFiles, saveTextFile } from './services/dialog';
 import { normalizeActivationCode, type ActivationController } from './services/activation-service';
 
 export interface IpcContext {
@@ -88,6 +88,9 @@ export function registerIpc(context: IpcContext): void {
   ipcMain.handle('dialog:pickFolder', (event) => pickFolder(BrowserWindow.fromWebContents(event.sender)));
   ipcMain.handle('dialog:pickVideoFile', (event) =>
     pickVideoFile(BrowserWindow.fromWebContents(event.sender)),
+  );
+  ipcMain.handle('dialog:pickVideoFiles', (event) =>
+    pickVideoFiles(BrowserWindow.fromWebContents(event.sender)),
   );
   ipcMain.handle('dialog:pickAudioFile', (event) =>
     pickAudioFile(BrowserWindow.fromWebContents(event.sender)),

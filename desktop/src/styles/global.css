@@ -74,9 +74,16 @@ body {
 /* ── DSS 氛围层：克制的双辐射光斑（左上主靛 4% / 右下紫 3%）── */
 body {
   background:
-    radial-gradient(900px 620px at 6% -8%, var(--dc-ambient-primary), transparent 62%),
-    radial-gradient(820px 540px at 102% 108%, var(--dc-ambient-accent), transparent 62%),
+    radial-gradient(980px 680px at 20% -16%, var(--dc-ambient-primary), transparent 64%),
+    radial-gradient(780px 560px at 108% 102%, var(--dc-ambient-accent), transparent 62%),
     var(--dc-bg-layout);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--dc-home-focus);
+  outline-offset: 2px;
 }
 
 /* ── 卡片质感：顶部 1px 高光 + 悬浮上浮 ── */
@@ -128,6 +135,68 @@ body {
 }
 main > * {
   animation: dss-fade-in 0.22s ease-out;
+}
+
+/* ── 首页：引导卡采用双列编辑台构图，下方内容回到单列阅读节奏 ── */
+.home-top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.68fr) minmax(290px, 0.82fr);
+  align-items: stretch;
+}
+
+.home-empty-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.home-film-strip {
+  display: flex;
+  align-items: center;
+}
+
+.home-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.home-guide-info {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.1fr);
+}
+
+@media (max-width: 1160px) {
+  .home-top-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-film-strip {
+    display: none;
+  }
+
+  .home-guide-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .home-empty-card,
+  .home-guide-info {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .home-guide-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main > *,
+  .ant-card-hoverable,
+  .project-cover img {
+    animation: none;
+    transition: none;
+  }
 }
 
 /* ── 项目封面悬浮微放大 ── */

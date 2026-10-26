@@ -16,6 +16,7 @@ import { VisionTab } from './VisionTab';
 import { PromptsTab } from './PromptsTab';
 import { EngineTabNav } from './EngineTabNav';
 import { ImportModelModal } from './ImportModelModal';
+import { type ManagedAsrActivation, useManagedAsrActivation } from './CloudDomainUI';
 import type { EngineTab, Reports } from './assetState';
 import type { MachineSpecs } from './machineFit';
 import { type EnginesData, useEnginesData } from './useEnginesData';
@@ -41,6 +42,8 @@ export interface DomainTabProps {
   readonly onVerify: (modelId: string) => void;
   readonly onForget: (path: string) => void;
   readonly onImport: () => void;
+  /** 激活托管态：有 activationApi 时由 EnginesPage 注入；缺省 = 未接线，ASR tab 走旧配置路径。 */
+  readonly activation?: ManagedAsrActivation;
 }
 
 /** 引擎中心页（导航「引擎」）。 */
@@ -50,6 +53,7 @@ export function EnginesPage(): ReactElement {
   const { data, load, saveSettings, verifyOne } = useEnginesData();
   const tab = tabFromPath(location.pathname);
   const hub = useModelImport(data?.models ?? [], load, saveSettings);
+  const activation = useManagedAsrActivation();
   return (
     <PageShell>
       <PageHeader title="引擎中心" desc="总览看能不能开工，域内管引擎与资产——看到异常，就地修" />
@@ -73,6 +77,7 @@ export function EnginesPage(): ReactElement {
           <TabBody
             tab={tab}
             data={data}
+            activation={activation}
             onSave={saveSettings}
             onLoaded={load}
             onVerify={verifyOne}
@@ -96,6 +101,7 @@ export function EnginesPage(): ReactElement {
 function TabBody({
   tab,
   data,
+  activation,
   onSave,
   onLoaded,
   onVerify,
@@ -104,6 +110,7 @@ function TabBody({
 }: {
   tab: EngineTabKey;
   data: EnginesData;
+  activation: ManagedAsrActivation;
   onSave: (values: SettingsMap) => Promise<void>;
   onLoaded: () => Promise<void>;
   onVerify: (modelId: string) => Promise<void>;
@@ -118,6 +125,7 @@ function TabBody({
     reports: data.reports,
     selftests: data.selftests,
     machine: data.machine,
+    activation,
     onSave: (values) => {
       void onSave(values);
     },

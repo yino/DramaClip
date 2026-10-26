@@ -2,8 +2,33 @@
 import { App as AntdApp } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { Project } from '@dramaclip/protocol';
+import type { CreateProjectFromFilesResult, Project } from '@dramaclip/protocol';
 import { projectApi } from '../../services/client';
+import { dramaEntryPath } from '../../app/routes';
+import { skippedFilesNote } from './projectSourceLabel';
+
+/** 名称 + 多选文件建项目：成功 toast（含跳过报告）后直达分析页。
+ * HomePage 与 ProjectsPage 共用；失败直接抛给弹窗，由弹窗留在原地显示原因。 */
+export type CreateProjectFromFiles = (
+  name: string,
+  files: readonly string[],
+) => Promise<CreateProjectFromFilesResult>;
+
+export function useCreateProject(): CreateProjectFromFiles {
+  const navigate = useNavigate();
+  const { message } = AntdApp.useApp();
+  return useCallback(
+    async (name, files) => {
+      const result = await projectApi.createFromFiles(name, files);
+      message.success(`已创建「${result.project.name}」`);
+      const skippedNote = skippedFilesNote(result.skipped);
+      if (skippedNote !== null) message.warning(skippedNote);
+      await navigate(dramaEntryPath(result.project.id));
+      return result;
+    },
+    [message, navigate],
+  );
+}
 
 export interface ProjectsController {
   projects: Project[] | null;
@@ -11,6 +36,8 @@ export interface ProjectsController {
   loadError: string | null;
   reload: () => Promise<void>;
   create: (name: string, folder: string) => Promise<void>;
+  /** 弹窗多选建项目（4.3 起的新入口）；成功后跳转由 useCreateProject 统一负责。 */
+  createFromFiles: CreateProjectFromFiles;
   remove: (project: Project) => Promise<void>;
   rename: (project: Project, name: string) => Promise<void>;
   duplicate: (project: Project) => Promise<void>;
@@ -19,6 +46,7 @@ export interface ProjectsController {
 export function useProjects(): ProjectsController {
   const navigate = useNavigate();
   const { message } = AntdApp.useApp();
+  const createFromFiles = useCreateProject();
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -78,5 +106,5 @@ export function useProjects(): ProjectsController {
     [load, message],
   );
 
-  return { projects, loadError, reload, create, remove, rename, duplicate };
+  return { projects, loadError, reload, create, createFromFiles, remove, rename, duplicate };
 }

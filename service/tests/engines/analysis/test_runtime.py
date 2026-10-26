@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from dramaclip.engines.analysis import runtime
+from dramaclip.engines.analysis.gateway_asr import GatewayCloudAsrEngine
 from dramaclip.engines.analysis.transcriber import (
     DashscopeCloudAsrEngine,
     FasterWhisperEngine,
@@ -27,17 +28,26 @@ _BUILDS: dict[str, type] = {
     "sensevoice": SenseVoiceEngine,
     "paraformer": ParaformerEngine,
     "dashscope_cloud": DashscopeCloudAsrEngine,
+    "cloud_gateway": GatewayCloudAsrEngine,
 }
+
+# 网关引擎的接入凭据：激活流程写入 asr.base_url（含 /v1）与设备令牌 asr.api_key
+_GATEWAY = {"asr.base_url": "https://gateway.example/v1", "asr.api_key": "device-token"}
 
 
 def _settings(**overrides: str) -> config.Settings:
     return {**config.DEFAULTS, **overrides}
 
 
+def _engine_settings(engine: str, **overrides: str) -> config.Settings:
+    extra = dict(_GATEWAY) if engine == "cloud_gateway" else {}
+    return _settings(**{**extra, "asr.engine": engine, **overrides})
+
+
 def test_every_supported_engine_builds_without_loading_a_model(tmp_path: Path) -> None:
     assert runtime.supported() == frozenset(_BUILDS)
     for engine, cls in _BUILDS.items():
-        built = runtime._build_transcriber(_settings(**{"asr.engine": engine}), tmp_path)
+        built = runtime._build_transcriber(_engine_settings(engine), tmp_path)
         assert type(built) is cls
 
 
@@ -74,23 +84,72 @@ def test_compute_type_setting_reaches_the_engine(tmp_path: Path) -> None:
 
     反面即死设置：DEFAULTS 里写着、构造时没人传，GPU 白白闲置。
     """
-    engine = runtime._build_transcriber(_settings(**{"asr.compute_type": "float16"}), tmp_path)
+    engine = runtime._build_transcriber(
+        _engine_settings("faster_whisper", **{"asr.compute_type": "float16"}), tmp_path
+    )
     assert isinstance(engine, FasterWhisperEngine)
     assert engine._compute_type == "float16"
-    default = runtime._build_transcriber(_settings(), tmp_path)
+    default = runtime._build_transcriber(_engine_settings("faster_whisper"), tmp_path)
     assert isinstance(default, FasterWhisperEngine)
     assert default._compute_type == config.DEFAULTS["asr.compute_type"]
+
+
+def test_default_engine_is_the_cloud_gateway(tmp_path: Path) -> None:
+    """D1 的交付面：默认引擎/模型换到网关，且 asr.base_url + asr.api_key 原样进引擎。"""
+    assert config.DEFAULTS["asr.engine"] == "cloud_gateway"
+    assert config.DEFAULTS["asr.model"] == "fun-asr-flash"
+    assert config.DEFAULTS["asr.base_url"] == ""
+    built = runtime._build_transcriber(_settings(**_GATEWAY), tmp_path)
+    assert isinstance(built, GatewayCloudAsrEngine)
+    assert built.name == "cloud_gateway:fun-asr-flash"
+    assert built._base_url == "https://gateway.example/v1"  # noqa: SLF001 - 同包测试边界
+    assert built._api_key == "device-token"  # noqa: SLF001
+
+
+def test_cloud_gateway_missing_config_fails_before_building(tmp_path: Path) -> None:
+    """缺 base_url/token 在构建期就报可读错，而不是转写到一半才 401。"""
+    with pytest.raises(ValueError, match="asr.base_url"):
+        runtime._build_transcriber(
+            _settings(**{"asr.engine": "cloud_gateway", "asr.api_key": "device-token"}), tmp_path
+        )
+    with pytest.raises(ValueError, match="asr.api_key"):
+        runtime._build_transcriber(
+            _settings(
+                **{"asr.engine": "cloud_gateway", "asr.base_url": "https://gateway.example/v1"}
+            ),
+            tmp_path,
+        )
+
+
+def test_cloud_gateway_model_and_diarization_reach_the_engine(tmp_path: Path) -> None:
+    """别名与分离映射：fun-asr 无分离通道；qwen 才开 diarization，显式 true 照旧炸。"""
+    fun = runtime._build_transcriber(_engine_settings("cloud_gateway"), tmp_path)
+    assert fun.supports_diarization is False
+    assert fun._diarization is False  # noqa: SLF001
+    qwen = runtime._build_transcriber(
+        _engine_settings(
+            "cloud_gateway",
+            **{"asr.model": "qwen-audio-3.1-asr-flash", "asr.diarization": "auto"},
+        ),
+        tmp_path,
+    )
+    assert qwen.supports_diarization is True
+    assert qwen._diarization is True  # noqa: SLF001
+    with pytest.raises(ValueError, match="cloud_gateway 不支持说话人分离"):
+        runtime._build_transcriber(
+            _engine_settings("cloud_gateway", **{"asr.diarization": "true"}), tmp_path
+        )
 
 
 def test_every_asr_engine_declares_diarization_support(tmp_path: Path) -> None:
     """每个引擎都要能回答「你能不能做说话人分离」：没有声明位，asr.diarization 就没人认领。"""
     for engine in _BUILDS:
-        built = runtime._build_transcriber(_settings(**{"asr.engine": engine}), tmp_path)
+        built = runtime._build_transcriber(_engine_settings(engine), tmp_path)
         assert isinstance(built.supports_diarization, bool), engine
 
 
 def test_diarization_defaults_to_auto_not_true() -> None:
-    """默认值不能是 true：默认引擎 faster_whisper 做不到的事，登记成真等于许一个假。"""
+    """默认值不能是 true：默认引擎 fun-asr-flash 做不到的事，登记成真等于许一个假。"""
     assert config.DEFAULTS["asr.diarization"] == "auto"
 
 

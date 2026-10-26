@@ -748,33 +748,9 @@ class DashscopeCloudAsrEngine:
 
     def _chunks(self, wav_path: Path) -> list[pause_split.Clip]:
         """能量停顿切 ≤_CHUNK_S 片；分析失败退整条，超限片硬等分兜底。"""
-        import wave
+        from dramaclip.engines.analysis import cloud_split
 
-        try:
-            clips = pause_split.speech_clips(wav_path, max_clip_s=self._CHUNK_S)
-        except (OSError, pause_split.PauseAnalysisUnavailable) as exc:
-            with wave.open(str(wav_path), "rb") as wf:
-                duration = wf.getnframes() / wf.getframerate()
-            _LOGGER.warning(
-                "停顿切分退回整条后按 %ss 硬等分（%s: %s）：切点不再落在真实停顿上",
-                self._CHUNK_S,
-                type(exc).__name__,
-                exc,
-            )
-            clips = [pause_split.Clip(0.0, duration)]
-        chunks: list[pause_split.Clip] = []
-        for clip in clips:
-            span = clip.end - clip.start
-            if span <= self._CHUNK_S:
-                chunks.append(clip)
-                continue
-            parts = int(span / self._CHUNK_S) + (1 if span % self._CHUNK_S else 0)
-            step = span / parts
-            for k in range(parts):
-                chunks.append(
-                    pause_split.Clip(clip.start + k * step, clip.start + (k + 1) * step)
-                )
-        return chunks
+        return cloud_split.split_wav_for_cloud(wav_path, self._CHUNK_S)
 
     def _call_with_retry(
         self, client: Any, clip_path: Path, sample_rate: int

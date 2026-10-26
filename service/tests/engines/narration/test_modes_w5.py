@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dramaclip.engines.narration import casting, pipeline
 from dramaclip.engines.narration.casting import stamp
+from dramaclip.engines.narration.conversion import defects, grade
 from dramaclip.engines.narration.models import StrategySpec
 from dramaclip.engines.narration.modes_w5 import build_cross, build_ultra_short
 from dramaclip.engines.semantic.models import ConflictScore
@@ -126,6 +127,21 @@ def test_ultra_short_stores_score_ordered_scene_pool() -> None:
     assert len(plan.scene_pool) == 6, "池深度 = _ULTRA_POOL_SIZE，不足时取全部"
     assert (plan.scene_pool[0].start, plan.scene_pool[0].end) == (140.0, 148.0)
     assert plan.scene_pool[0].episode_id == "ep1"
+
+
+def test_ultra_short_short_source_flags_material_without_negative_start() -> None:
+    """10s 素材放不下 30s 钩子 + 15s CTA 预算：钩子退回 4s 占位形状（尾锚场景
+    开头），绝不拿 30s 预算去减一个 4.4s 的起点；规划期把「素材太短」写进
+    planning_issue，门禁据此判 draft，卡面显示可操作的人话而不是负起点。"""
+    scenes = [ConflictScore(scene_index=0, start=4.4, end=7.4, score=95)]
+    plan = build_ultra_short(stamp([(1, "ep1", scenes)]), _STRATEGY, None, {"ep1": 10.0})
+    hook, conflict, _cta = plan.timeline
+    assert (hook.start, hook.end) == (4.4, 8.4)
+    assert (conflict.start, conflict.end) == (4.4, 7.4)
+    assert plan.planning_issue.startswith("素材太短"), "先把可操作原因讲清楚"
+    assert "高光混剪" in plan.planning_issue
+    assert defects(plan)[0] == plan.planning_issue
+    assert grade(plan) == "draft"
 
 
 def test_ultra_short_without_durations_keeps_highest_score_scene() -> None:

@@ -7,6 +7,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from dramaclip.api import project as project_api
 from dramaclip.transport.rpc import Router
 
@@ -43,6 +45,76 @@ def test_create_rejects_missing_dir(memory_db: sqlite3.Connection, tmp_path: Pat
         _request(1, "project.create", {"name": "x", "source_path": str(tmp_path / "nope")})
     )
     assert response.error is not None and response.error.code == -32102
+
+
+def test_create_persists_folder_source_fields(
+    memory_db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    router = _router(memory_db)
+    project = router.dispatch(
+        _request(1, "project.create", {"name": "来源", "source_path": str(tmp_path)})
+    ).result
+    assert (project["source_kind"], project["source_root"]) == ("folder", str(tmp_path))
+
+    detail = router.dispatch(
+        _request(2, "project.get", {"project_id": project["id"]})
+    ).result["project"]
+    assert (detail["source_kind"], detail["source_root"]) == ("folder", str(tmp_path))
+
+
+def test_duplicate_keeps_source_fields(
+    memory_db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    router = _router(memory_db)
+    project = router.dispatch(
+        _request(1, "project.create", {"name": "文件剧", "source_path": str(tmp_path)})
+    ).result
+    memory_db.execute(
+        "UPDATE projects SET source_kind = 'files', source_root = '/media/picked'"
+        " WHERE id = ?",
+        (project["id"],),
+    )
+    memory_db.commit()
+
+    copied = router.dispatch(
+        _request(2, "project.duplicate", {"project_id": project["id"]})
+    ).result
+    assert (copied["source_kind"], copied["source_root"]) == ("files", "/media/picked")
+    assert copied["source_path"].startswith(f"{project['source_path']}#copy-")
+
+
+@pytest.mark.parametrize("source_kind", ["files", "mixed"])
+def test_scan_rejects_non_folder_source_and_keeps_episodes(
+    memory_db: sqlite3.Connection,
+    tmp_path: Path,
+    sample_video: Path,
+    source_kind: str,
+) -> None:
+    """files/mixed 的 source_path 不是可重扫的素材目录，目录快照会覆盖多选文件集。"""
+    router = _scan_router(memory_db, tmp_path / "cache", data_dir=tmp_path)
+    for number in (1, 2):
+        shutil.copy(sample_video, tmp_path / f"ep{number}.mp4")
+    project = router.dispatch(
+        _request(1, "project.create", {"name": "p", "source_path": str(tmp_path)})
+    ).result
+    router.dispatch(_request(2, "project.scan_episodes", {"project_id": project["id"]}))
+    memory_db.execute(
+        "UPDATE projects SET source_kind = ? WHERE id = ?", (source_kind, project["id"])
+    )
+    memory_db.commit()
+    before = router.dispatch(
+        _request(3, "project.get", {"project_id": project["id"]})
+    ).result["episodes"]
+
+    response = router.dispatch(
+        _request(4, "project.scan_episodes", {"project_id": project["id"]})
+    )
+
+    assert response.error is not None and response.error.code == -32102
+    after = router.dispatch(
+        _request(5, "project.get", {"project_id": project["id"]})
+    ).result["episodes"]
+    assert after == before, "拒绝重扫必须保持素材不变"
 
 
 def test_scan_episodes_registers_videos(

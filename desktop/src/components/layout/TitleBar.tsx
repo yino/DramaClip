@@ -1,17 +1,22 @@
 /** 自定义标题栏：拖拽区 + 项目搜索 + 窗口控制（frame:false 配套）。 */
 import { useEffect, useState, type CSSProperties } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { BorderOutlined, CloseOutlined, MinusOutlined, SearchOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import {
+  BorderOutlined,
+  CloseOutlined,
+  MinusOutlined,
+  SafetyCertificateOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import { projectApi, windowControl } from '../../services/client';
 import { rememberDrama } from '../../stores/lastDrama';
+import { summarizeJobs, useJobsStore } from '../../stores/jobs';
 import { hoverBg } from '../../styles/mixins';
 import { layout, tokens } from '../../styles/theme';
 import { dramaEntryPath } from '../../app/routes';
 import logo from '../../assets/logo.png';
 
 export function TitleBar(): React.ReactElement {
-  const location = useLocation();
-  const onProjectArea = location.pathname.startsWith('/projects');
   return (
     <div
       style={{
@@ -48,21 +53,110 @@ export function TitleBar(): React.ReactElement {
           DramaClip
         </span>
       </div>
-      {onProjectArea ? (
+      <div
+        style={{
+          width: layout.titleBar.search.width,
+          minWidth: 180,
+          maxWidth: 'calc(100vw - 700px)',
+          flexShrink: 1,
+          marginLeft: layout.titleBar.search.leftOffset,
+        }}
+      >
         <ProjectSearch />
-      ) : (
-        <span
-          style={{
-            fontSize: tokens.text.body.size,
-            lineHeight: tokens.text.body.leading,
-            color: tokens.textTertiary,
-          }}
-        >
-          左侧选择工作区，进入项目后可在此快速跳转
-        </span>
-      )}
+      </div>
+      <TitleMeta />
       <WindowButtons />
     </div>
+  );
+}
+
+/** 顶栏状态只回答两件事：有没有任务在跑、素材在哪里处理。 */
+function TitleMeta(): React.ReactElement {
+  const jobs = useJobsStore((state) => state.jobs);
+  const available = useJobsStore((state) => state.available);
+  const error = useJobsStore((state) => state.error);
+  const setDrawerOpen = useJobsStore((state) => state.setDrawerOpen);
+  const summary = summarizeJobs(jobs);
+  const jobLabel = !available
+    ? '任务 · —'
+    : summary.active > 0
+      ? `任务 · ${String(summary.active)} 项在跑`
+      : summary.failed > 0
+        ? `任务 · ${String(summary.failed)} 项失败`
+        : '没有任务';
+
+  return (
+    <div
+      style={{
+        marginLeft: 'auto',
+        display: 'flex',
+        alignItems: 'center',
+        gap: tokens.spaceSm,
+        WebkitAppRegion: 'no-drag',
+      } as CSSProperties}
+    >
+      <MetaPill
+        icon={
+          <span
+            style={{
+              width: tokens.spaceSm,
+              height: tokens.spaceSm,
+              borderRadius: tokens.radiusChip,
+              background: available ? tokens.colorInfo : tokens.textTertiary,
+              display: 'block',
+            }}
+          />
+        }
+        label={jobLabel}
+        title={!available ? (error ?? '任务状态未知') : '打开任务中心'}
+        onClick={() => {
+          setDrawerOpen(true);
+        }}
+      />
+      <MetaPill
+        icon={<SafetyCertificateOutlined />}
+        label="素材本地处理"
+        title="视频素材保留在本机"
+      />
+    </div>
+  );
+}
+
+function MetaPill({
+  icon,
+  label,
+  title,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  title: string;
+  onClick?: () => void;
+}): React.ReactElement {
+  const style: CSSProperties = {
+    height: layout.controlHeight.md,
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: tokens.spaceSm,
+    padding: `0 ${tokens.spaceMd}`,
+    borderRadius: tokens.radiusChip,
+    border: `1px solid ${tokens.border}`,
+    background: tokens.bgInput,
+    color: tokens.textSecondary,
+    fontSize: tokens.text.meta.size,
+    lineHeight: tokens.text.meta.leading,
+    cursor: onClick === undefined ? 'default' : 'pointer',
+  };
+  return onClick === undefined ? (
+    <span title={title} style={style}>
+      {icon}
+      {label}
+    </span>
+  ) : (
+    <button type="button" title={title} style={style} onClick={onClick}>
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -107,8 +201,8 @@ const SEARCH_INPUT_STYLE: CSSProperties = {
   border: `1px solid ${tokens.border}`,
   background: tokens.bgInput,
   color: tokens.textPrimary,
-  fontSize: tokens.text.meta.size,
-  lineHeight: tokens.text.meta.leading,
+  fontSize: tokens.text.body.size,
+  lineHeight: tokens.text.body.leading,
   outline: 'none',
 };
 
@@ -138,11 +232,11 @@ function ProjectSearch(): React.ReactElement {
 
   return (
     <div
-      style={{ position: 'relative', width: layout.titleBar.search.width, WebkitAppRegion: 'no-drag' } as CSSProperties}
+      style={{ position: 'relative', width: '100%', WebkitAppRegion: 'no-drag' } as CSSProperties}
     >
       <input
         value={keyword}
-        placeholder="搜索项目…"
+        placeholder="搜索剧集或成品…"
         onChange={(event) => {
           setKeyword(event.target.value);
         }}
@@ -255,7 +349,7 @@ function WindowButtons() {
     </button>
   );
   return (
-    <div style={{ marginLeft: 'auto', display: 'flex', height: '100%' }}>
+    <div style={{ display: 'flex', height: '100%' }}>
       {make(<MinusOutlined />, 'minimize', hoverBg)}
       {make(<BorderOutlined style={{ fontSize: tokens.glyph.icon }} />, 'maximize-toggle', hoverBg)}
       {make(<CloseOutlined />, 'close', tokens.closeHot)}

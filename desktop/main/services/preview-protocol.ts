@@ -36,6 +36,67 @@ const ROOTS_TTL_MS = 60_000;
 
 export type PreviewRootsGetter = (forceRefresh: boolean) => Promise<readonly string[]>;
 
+/** project.list 的预览相关字段；形状由协议契约钳制，这里只做类型收窄。 */
+export interface PreviewProject {
+  id?: unknown;
+  source_path?: unknown;
+  source_root?: unknown;
+  source_kind?: unknown;
+}
+
+export interface PreviewEpisode {
+  source_path?: unknown;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
+}
+
+function absolutePath(value: unknown): string | null {
+  const text = nonEmptyString(value);
+  return text !== null && path.isAbsolute(text) ? text : null;
+}
+
+/**
+ * 从项目列表与集列表推导预览围栏。
+ *
+ * 目录项目用 source_path（旧服务无 source_root 时的回退）；文件项目用 source_root
+ * （所选文件的公共父目录）。跨目录文件项目与混合项目的 source_root 不足或为空，
+ * 必须补上每一集源文件所在目录——否则文件项目的 `files:<uuid>` 会被当成根，
+ * 播放器请求永远 403（2026-10-24 真机问题：新建文件项目后视频 0:00 不可播）。
+ * 单个项目取集失败只跳过该项目的补充根，不拖垮其余预览。
+ */
+export async function collectPreviewRoots(
+  projects: readonly PreviewProject[],
+  loadEpisodes: (projectId: string) => Promise<readonly PreviewEpisode[]>,
+): Promise<string[]> {
+  const roots = new Set<string>();
+  for (const project of projects) {
+    const kind = nonEmptyString(project.source_kind);
+    const displayRoot = nonEmptyString(project.source_root);
+    const sourcePath = nonEmptyString(project.source_path);
+    const root =
+      displayRoot !== null && absolutePath(displayRoot) !== null
+        ? displayRoot
+        : kind === 'files'
+          ? null
+          : absolutePath(sourcePath);
+    if (root !== null) roots.add(root);
+    const id = nonEmptyString(project.id);
+    const needsEpisodes = root === null || kind === 'mixed';
+    if (!needsEpisodes || id === null) continue;
+    try {
+      for (const episode of await loadEpisodes(id)) {
+        const episodePath = absolutePath(episode.source_path);
+        if (episodePath !== null) roots.add(path.dirname(episodePath));
+      }
+    } catch {
+      // 服务短暂不可用/项目刚删：该项目的补充根缺失，其他项目照常预览。
+    }
+  }
+  return [...roots];
+}
+
 export function decodePreviewPath(url: string): string | null {
   try {
     const pathname = new URL(url).pathname.replace(/^\/+/, '');

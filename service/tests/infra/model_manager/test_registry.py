@@ -63,6 +63,9 @@ def test_requirements_table_has_no_row_for_a_gone_engine() -> None:
         if _is_cloud(spec)
     }
     expected = (set(asr_supported()) | local_tts) - cloud
+    # 托管云端识别（cloud_gateway）由激活流程供给：无本地资产、也不进模型清单，
+    # 不参与「模型行 ↔ 必需文件」对账。
+    expected -= {"cloud_gateway"}
     assert set(registry._REQUIREMENTS) == expected
 
 

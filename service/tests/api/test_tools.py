@@ -59,6 +59,7 @@ def context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
 
 
 def _seed_media(monkeypatch: pytest.MonkeyPatch, video: Path) -> None:
+    monkeypatch.setattr(tools_api.tools_media, "inspect_video_source", lambda _p: True)
     monkeypatch.setattr(tools_api, "extract_audio", lambda v, w: Path(w).write_bytes(b"x"))
     monkeypatch.setattr(
         tools_api.subtitle_ocr, "extract_subtitles", lambda v, w, *, duration_s: (
@@ -106,6 +107,54 @@ def test_extract_start_rejects_missing_video(context: SimpleNamespace) -> None:
 
     with pytest.raises(RpcDomainError, match="媒体文件不存在"):
         tools_api.extract_start(context, {"video_path": "Z:/不存在.mp4"})
+
+
+def test_extract_without_audio_falls_back_to_ocr(
+    context: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video = tmp_path / "silent.mp4"
+    video.write_bytes(b"x")
+
+    def _unexpected(*_a: Any, **_k: Any) -> None:
+        raise AssertionError("无音轨视频不应抽音频或调用 ASR")
+
+    monkeypatch.setattr(tools_api.tools_media, "inspect_video_source", lambda _p: False)
+    monkeypatch.setattr(tools_api, "extract_audio", _unexpected)
+    monkeypatch.setattr(context.analysis_runtime, "transcriber", _unexpected)
+    monkeypatch.setattr(
+        tools_api.subtitle_ocr,
+        "extract_subtitles",
+        lambda v, w, *, duration_s: (
+            [OcrSegment(start=1.0, end=3.0, text="只看画面也能提取")],
+            None,
+            None,
+        ),
+    )
+
+    result = tools_api.get_result(
+        context,
+        {"job_id": tools_api.extract_start(context, {"video_path": str(video)})["job_id"]},
+    )
+    assert result["status"] == "completed"
+    assert result["result"] is not None
+    assert result["result"]["text"] == "只看画面也能提取"
+
+
+def test_extract_reports_corrupt_video_as_source_error(
+    context: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    video = tmp_path / "broken.mp4"
+    video.write_bytes(b"x")
+    monkeypatch.setattr(
+        tools_api.tools_media,
+        "inspect_video_source",
+        lambda _p: (_ for _ in ()).throw(ValueError("视频画面无法解码；请重新下载或更换文件")),
+    )
+
+    job_id = tools_api.extract_start(context, {"video_path": str(video)})["job_id"]
+    result = tools_api.get_result(context, {"job_id": job_id})
+    assert result["status"] == "failed"
+    assert "重新下载或更换文件" in str(result["error"])
 
 
 def test_tts_writes_into_tools_dir(

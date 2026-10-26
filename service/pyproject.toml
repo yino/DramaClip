@@ -16,6 +16,8 @@ dependencies = [
   "jieba>=0.42",
   # pypinyin：转写精炼的拼音护栏（同音/近音校验，防 LLM 幻觉改写）
   "pypinyin>=0.53",
+  # requests：云端识别（激活网关）三步 HTTP——超时/重试/多部分表单直传
+  "requests>=2.31",
 ]
 
 [project.optional-dependencies]

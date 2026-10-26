@@ -17,6 +17,7 @@ from dramaclip.api.analysis_job import (
     _source_stale,
 )
 from dramaclip.api.context import AppContext, llm_trace_dir
+from dramaclip.api.ingest_guard import active_ingest_job
 from dramaclip.engines.analysis import prescreen as prescreen_engine
 from dramaclip.engines.analysis.models import (
     AsrSegment,
@@ -37,6 +38,7 @@ _ERR_JOB_NOT_FOUND = -32201
 _ERR_NO_EPISODES = -32202
 _ERR_NO_ANALYSIS = -32203
 _ERR_SEGMENT_INVALID = -32204
+_ERR_ASR_NOT_READY = -32205
 
 
 def register(router: Router, context: AppContext) -> None:
@@ -65,19 +67,54 @@ def autostart_after_scan(
         return None
     if getattr(context, "job_store", None) is None or getattr(context, "executor", None) is None:
         return None
-    if _active_ingest_job(context, project_id) is not None:
+    if active_ingest_job(context.conn, project_id) is not None:
         return None
     threshold = max(1, min(config.get_int(settings, "analysis.full_threshold"), 80))
-    if episode_count <= threshold:
-        return start(context, {"project_id": project_id})
-    return prescreen(context, {"project_id": project_id, "then_analyze": True})
+    try:
+        if episode_count <= threshold:
+            return start(context, {"project_id": project_id})
+        return prescreen(context, {"project_id": project_id, "then_analyze": True})
+    except RpcDomainError as exc:
+        # 自动分析是扫集/导入之后的增益动作：项目与素材已经落库提交，这里失败不能
+        # 把成功的导入回滚成错误响应（用户会以为项目没建成）。留一条可读日志，用户
+        # 仍可手动点分析。
+        notifier = getattr(context, "notifier", None)
+        if notifier is not None:
+            notifier.log("warn", f"自动分析未启动（项目已创建）：{exc.message}")
+        return None
 
 
-def _active_ingest_job(context: AppContext, project_id: str) -> dict[str, Any] | None:
-    for job in context.job_store.list_recent(limit=50, active_only=True):
-        if job.get("ref_id") == project_id and job.get("type") in ("analysis", "prescreen"):
-            return job
-    return None
+def _require_cloud_asr_ready(context: AppContext) -> None:
+    """云端识别前置检查：配置缺失或积分明确耗尽时给可读错误。
+
+    只有默认走网关（``asr.engine == 'cloud_gateway'``）时才检查；积分查询本身
+    失败（网络/未配置/服务端抖动）不阻断分析，避免把临时网络问题误判成无积分。
+    """
+    settings = getattr(context, "settings", None)
+    if not isinstance(settings, dict) or settings.get("asr.engine") != "cloud_gateway":
+        return
+    base_url = str(settings.get("asr.base_url", "")).strip()
+    token = str(settings.get("asr.api_key", "")).strip()
+    if base_url == "" or token == "":
+        raise RpcDomainError(
+            _ERR_ASR_NOT_READY, "云端识别未就绪：请重新激活或联网后重试"
+        )
+    try:
+        from dramaclip.api import asr as asr_api
+
+        payload = asr_api.credits(context)
+    except Exception:  # 查询失败不阻断：真正转写时还会再报一次
+        return
+    if payload.get("available") is not True:
+        return
+    try:
+        remaining = float(payload.get("remaining", 0))
+    except (TypeError, ValueError):
+        return
+    if remaining <= 0:
+        raise RpcDomainError(
+            _ERR_ASR_NOT_READY, "云端识别积分不足：请补充积分或切换本地引擎"
+        )
 
 
 def prescreen(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
@@ -94,6 +131,7 @@ def prescreen(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
     ]
     if not targets:
         raise RpcDomainError(_ERR_NO_EPISODES, "没有待预筛的集")
+    _require_cloud_asr_ready(context)
     job_id = context.job_store.create("prescreen", ref_id=project_id)
     cancel_event = threading.Event()
     context.cancel_events[job_id] = cancel_event
@@ -195,6 +233,7 @@ def start(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
     if not targets:
         raise RpcDomainError(_ERR_NO_EPISODES, "没有待分析的集")
 
+    _require_cloud_asr_ready(context)
     job_id = context.job_store.create("analysis", ref_id=project_id)
     # 建单即整批标 analyzing：前置的全剧 OCR/热词挖掘要逐集跑数分钟，期间集状态
     # 不能滞留旧值（否则界面整批显示 failed/pending 一动不动，用户无从判断是否受理）。

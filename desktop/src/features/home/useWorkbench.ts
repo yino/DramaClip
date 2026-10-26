@@ -3,9 +3,12 @@
  * "就绪前不发"沿用 HomePage 既有的时序修复——服务就绪前发起的 RPC
  * 会失败，否则每次冷启都会打出一串红色 message。
  *
- * 五个数据源全部是既有方法，本片零后端：
- *   project.list · models.list · settings.get（只判 llm.base_url 是否为空）·
- *   export.list_works · jobs.list
+ * 三个数据源全部是既有方法，本片零后端：
+ *   project.list · export.list_works · jobs.list
+ *
+ * 不调 models.list / settings.get：工作台不展示模型、引擎与本地运行环境
+ * （规格 desktop-workbench「工作台不展示模型与环境信息」）。这些状态只在
+ * 引擎中心、设置、关于页出现，工作台不必为不显示的字段付两次 RPC。
  *
  * 不调 project.dashboard_summary：它唯一的用处是 project_count，而 projects.length
  * 就是同一个数；它的 export_count 反而不可用（见 stats.ts 顶部注释）。少一次 RPC。
@@ -14,8 +17,8 @@
  * 失败任务的 error 原文改从 jobs.list 拿——一次 RPC，jobs 行里有 error。
  */
 import { useCallback, useEffect, useState } from 'react';
-import type { JobInfo, JobsListResult, ModelInfo, Project, WorkItem } from '@dramaclip/protocol';
-import { jobsApi, listWorks, projectApi, rpc } from '../../services/client';
+import type { JobInfo, JobsListResult, Project, WorkItem } from '@dramaclip/protocol';
+import { jobsApi, listWorks, projectApi } from '../../services/client';
 import { useUiStore } from '../../stores/ui';
 import { WORKS_SCAN_LIMIT } from './stats';
 
@@ -24,10 +27,6 @@ export const JOBS_SCAN_LIMIT = 200;
 
 export interface WorkbenchData {
   readonly projects: Project[];
-  /** null = 还没取回来或取失败。buildTodos 据此区分"加载中"与"缺模型"。 */
-  readonly models: ModelInfo[] | null;
-  readonly llmBaseUrl: string;
-  readonly ttsEngine: string;
   readonly jobs: JobInfo[];
   /** jobs.list 是否取到；取不到时 jobsError 是原因原文。 */
   readonly jobsAvailable: boolean;
@@ -38,9 +37,6 @@ export interface WorkbenchData {
 
 const EMPTY: WorkbenchData = {
   projects: [],
-  models: null,
-  llmBaseUrl: '',
-  ttsEngine: 'edge',
   jobs: [],
   jobsAvailable: false,
   jobsError: null,
@@ -59,10 +55,8 @@ export function useWorkbench(): Workbench {
   const [data, setData] = useState<WorkbenchData>(EMPTY);
 
   const reload = useCallback(async () => {
-    const [projects, models, settings, works, jobs] = await Promise.all([
+    const [projects, works, jobs] = await Promise.all([
       projectApi.list(),
-      rpc<ModelInfo[]>('models.list').catch(() => null),
-      rpc<Record<string, string>>('settings.get').catch(() => null),
       listWorks(WORKS_SCAN_LIMIT).catch((): WorkItem[] => []),
       jobsApi
         .list(JOBS_SCAN_LIMIT)
@@ -73,14 +67,11 @@ export function useWorkbench(): Workbench {
     ]);
     setData({
       projects,
-      models,
-      llmBaseUrl: settings?.['llm.base_url'] ?? '',
-      ttsEngine: settings?.['tts.engine'] ?? 'edge',
       jobs: jobs instanceof Error ? [] : jobs.jobs,
       jobsAvailable: !(jobs instanceof Error),
       jobsError: jobs instanceof Error ? `${jobs.name}: ${jobs.message}` : null,
       // 服务端时钟优先：ETA 与周增都要与 created_at/completed_at 同量纲同源。
-      // jobs.list 取不到时退回本机时钟——次优，但比拿 0 当"现在"好。
+      // jobs.list 取不到时退回本机时钟——次优，但拿 0 当"现在"更糟。
       serverTimeMs: jobs instanceof Error ? Date.now() : jobs.server_time_ms,
       works,
     });

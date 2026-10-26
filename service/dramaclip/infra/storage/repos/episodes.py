@@ -54,6 +54,49 @@ def replace_all(
     return len(episodes)
 
 
+def append_many(
+    conn: sqlite3.Connection,
+    project_id: str,
+    episodes: list[dict[str, Any]],
+    commit: bool = True,
+) -> int:
+    """向项目尾部追加集（导入=新增素材语义）：不删既有行、不覆盖自定义名。
+
+    集号从现存 MAX(episode_number)+1 起按传入顺序重编（入参 episode_number 只作
+    调用方排序参考）。commit=False 把提交留给外层事务，让「建项目+插集」整体
+    落地或整体回滚——失败不得留下半批。
+    """
+    if not episodes:
+        if commit:
+            conn.commit()
+        return 0
+    row = conn.execute(
+        "SELECT COALESCE(MAX(episode_number), 0) FROM episodes WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    start = (int(row[0]) if row is not None else 0) + 1
+    now = _now_ms()
+    for offset, episode in enumerate(episodes):
+        has_audio = episode.get("has_audio")
+        conn.execute(
+            "INSERT INTO episodes (id, project_id, episode_number, source_path, duration,"
+            " status, created_at, name, has_audio) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (
+                uuid4().hex,
+                project_id,
+                start + offset,
+                str(episode["source_path"]),
+                float(episode["duration"]),
+                now,
+                str(episode.get("name", "")),
+                None if has_audio is None else int(bool(has_audio)),
+            ),
+        )
+    if commit:
+        conn.commit()
+    return len(episodes)
+
+
 def list_by_project(conn: sqlite3.Connection, project_id: str) -> list[dict[str, Any]]:
     rows = conn.execute(
         f"SELECT {', '.join(_COLUMNS)} FROM episodes WHERE project_id = ?"

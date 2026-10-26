@@ -1,4 +1,4 @@
-/** 系统偏好设置项（引擎类配置在「引擎中心」；键权威源：service config.DEFAULTS）。
+/** 系统偏好设置项（引擎类配置由应用维护；键权威源：service config.DEFAULTS）。
  *
  * 分区口径（09-10 §4.6 / 卷二 #9）：「生产线默认值」与「字幕」两分区补入——
  * 键与消费端同源：K 默认 = narration.variants_per_mode（出片中心 K 下拉初值 + 服务端

@@ -128,8 +128,9 @@ def build_ultra_short(
     文案实测比预算长时由回填的「起点前伸」吸收，短则留硬切空隙，素材一秒不裁。
 
     `source_durations` 提供时做**可行性选景**：按分值序取第一个「场景前放得下
-    钩子预算、集尾放得下 CTA 预算」的场景；全都放不下时退回最高分场景——
-    回填守卫会给出如实的失败原因，不静默出坏片。
+    钩子预算、集尾放得下 CTA 预算」的场景；全都放不下时退回最高分场景，并把
+    「素材太短」写进 `planning_issue`（方案落 draft，卡面直接显示这句人话），
+    而不是让公式算出负起点、把失败原因留成一句时间轴报错。
     """
     if not scenes:
         return PlanData(mode="ultra_short_hook", strategy=strategy)
@@ -153,18 +154,26 @@ def build_ultra_short(
         )
         return start, end
 
-    best = next(
-        (
-            scene
-            for scene in ranked
-            if source_durations is not None
-            and scene.start >= _HOOK_BUDGET_S
-            and source_durations.get(scene.episode_id, 0.0)
-            >= scene.end + _CTA_BUDGET_S
-        ),
-        ranked[0],
-    )
+    def _fits_hook_and_cta(scene: EpisodeScene) -> bool:
+        if source_durations is None:
+            return False
+        return (
+            scene.start >= _HOOK_BUDGET_S
+            and source_durations.get(scene.episode_id, 0.0) >= scene.end + _CTA_BUDGET_S
+        )
+
+    feasible = next((scene for scene in ranked if _fits_hook_and_cta(scene)), None)
+    best = feasible or ranked[0]
     conflict_start, conflict_end = _conflict_window(best)
+    planning_issue = ""
+    if source_durations is not None and feasible is None:
+        limit = source_durations.get(best.episode_id, 0.0)
+        planning_issue = (
+            f"素材太短：最高分场景前只有 {conflict_start:.1f}s、场景后到集尾只有 "
+            f"{max(limit - conflict_end, 0.0):.1f}s；超短悬念版需要场景前 "
+            f"≥{_HOOK_BUDGET_S:.0f}s 钩子画面、集尾 ≥{_CTA_BUDGET_S:.0f}s CTA 画面，"
+            "请改用「高光混剪」或补充更长的素材"
+        )
     # 吸引力是唯一标准（业主裁决：时长让位，不为短而短）——brief 只描述要达成
     # 的效果，不设字数锚。爆款节奏锚（抖音/快手公开复盘）：0-3s 生死线上第一句
     # 必须是身份反差/生死/数字冲击；4-8s 冲突递进；结尾撕新缺口不剧透最大反转。
@@ -195,16 +204,16 @@ def build_ultra_short(
         TimelineSegment(
             episode_id=best.episode_id,
             # 钩子尾锚在冲突场景开头：文案实测比预算长→回填起点前伸，短→硬切进正片。
-            # 场景贴着集头、前面凑不出最小铺垫时退回旧占位形状（可行性选景会在
-            # 有集时长时避开这种场景，这里是无时长兜底）。
+            # 场景前只有不到一个钩子预算时退回旧占位形状（尾锚场景开头、占 4s），
+            # 绝不拿 30s 预算去减一个 4s 的起点——那会写出负起点，门禁必拦。
             start=(
                 round(conflict_start - _HOOK_BUDGET_S, 3)
-                if conflict_start >= _HOOK_TTS_FALLBACK_S
+                if conflict_start >= _HOOK_BUDGET_S
                 else conflict_start
             ),
             end=(
                 conflict_start
-                if conflict_start >= _HOOK_TTS_FALLBACK_S
+                if conflict_start >= _HOOK_BUDGET_S
                 else round(conflict_start + _HOOK_TTS_FALLBACK_S, 3)
             ),
             audio="narration",
@@ -238,4 +247,5 @@ def build_ultra_short(
                 (scene, _conflict_window(scene)) for scene in pool_scenes
             )
         ],
+        planning_issue=planning_issue,
     )

@@ -8,8 +8,8 @@ import time
 from typing import Any
 from uuid import uuid4
 
-_COLUMNS = ("id", "name", "source_path", "status", "created_at", "updated_at", "cover_path",
-            "settings")
+_COLUMNS = ("id", "name", "source_path", "source_kind", "source_root", "status", "created_at",
+            "updated_at", "cover_path", "settings")
 
 
 def _now_ms() -> int:
@@ -49,19 +49,35 @@ def _row_to_dict(
     }
 
 
-def create(conn: sqlite3.Connection, name: str, source_path: str) -> dict[str, Any]:
+def create(
+    conn: sqlite3.Connection,
+    name: str,
+    source_path: str,
+    source_kind: str = "folder",
+    source_root: str | None = None,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """建项目行；source_kind=来源类型（folder/files/mixed），source_root=展示根。
+
+    source_root 省略时取 source_path（目录项目的天然根）；文件项目跨目录时由调用方
+    传空串。commit=False 留给导入管线把「建项目+插集」收进同一事务。
+    """
     project_id = uuid4().hex
     now = _now_ms()
+    root = source_path if source_root is None else source_root
     conn.execute(
-        "INSERT INTO projects (id, name, source_path, status, created_at, updated_at)"
-        " VALUES (?, ?, ?, 'created', ?, ?)",
-        (project_id, name, source_path, now, now),
+        "INSERT INTO projects (id, name, source_path, source_kind, source_root, status,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'created', ?, ?)",
+        (project_id, name, source_path, source_kind, root, now, now),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return {
         "id": project_id,
         "name": name,
         "source_path": source_path,
+        "source_kind": source_kind,
+        "source_root": root,
         "status": "created",
         "created_at": now,
         "episode_count": 0,
@@ -80,8 +96,8 @@ def list_all(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     # 对账三戳（09-10 §3.1 过期金灯）：analyzed_at=最近一次分析落库、last_episode_at=
     # 最近一次喂料、latest_plan_at=最近一份方案快照；NULL=无从对账，前端金灯不点。
     rows = conn.execute(
-        "SELECT p.id, p.name, p.source_path, p.status, p.created_at, p.updated_at,"
-        " p.cover_path, p.settings, COUNT(e.id) AS episode_count,"
+        "SELECT p.id, p.name, p.source_path, p.source_kind, p.source_root, p.status,"
+        " p.created_at, p.updated_at, p.cover_path, p.settings, COUNT(e.id) AS episode_count,"
         " COALESCE(SUM(CASE WHEN e.status = 'done' THEN 1 ELSE 0 END), 0) AS analyzed_count,"
         " (SELECT COUNT(*) FROM narration_plans np WHERE np.project_id = p.id) AS plan_count,"
         " MAX(e.analyzed_at) AS analyzed_at,"
@@ -182,7 +198,13 @@ def duplicate(conn: sqlite3.Connection, project_id: str, new_name: str) -> dict[
     source = get(conn, project_id)
     if source is None:
         return None
-    created = create(conn, new_name, f"{source['source_path']}#copy-{_now_ms()}")
+    created = create(
+        conn,
+        new_name,
+        f"{source['source_path']}#copy-{_now_ms()}",
+        source_kind=str(source["source_kind"]),
+        source_root=str(source["source_root"]),
+    )
     if source["settings"]:
         conn.execute(
             "UPDATE projects SET settings = ? WHERE id = ?",

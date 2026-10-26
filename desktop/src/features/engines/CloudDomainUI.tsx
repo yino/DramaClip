@@ -5,9 +5,10 @@
  */
 import { App as AntdApp, Alert, Button, Segmented, Select } from 'antd';
 import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
-import { useState, type ReactElement } from 'react';
-import type { EngineConfig } from '@dramaclip/protocol';
-import { engineConfigsApi } from '../../services/client';
+import { useCallback, useEffect, useState, type ReactElement } from 'react';
+import type { ActivationSnapshot, EngineConfig } from '@dramaclip/protocol';
+import * as clientBridge from '../../services/client';
+
 import { tokens } from '../../styles/theme';
 import { ConfigModal, type CloudPreset, type FormState } from './CloudConfigModal';
 import { usesSdkEndpoint } from './cloudDomains';
@@ -54,13 +55,78 @@ export function activeCloudConfig(configs: readonly EngineConfig[]): EngineConfi
   return configs.find((config) => config.enabled === 1);
 }
 
+/** 托管识别页需要的只读激活视图（不把令牌/网关地址带给页面）。 */
+export interface ManagedAsrActivation {
+  readonly snapshot: ActivationSnapshot | null;
+  /** 渲染层是否接上了激活桥：false = 只有旧版云端配置路径（单测/旧壳）。 */
+  readonly available: boolean;
+  readonly busy: boolean;
+  readonly error: string;
+  readonly recheck: () => void;
+}
+
+function activationErrorText(error: unknown): string {
+  return error instanceof Error && error.message !== '' ? error.message : '激活状态读取失败';
+}
+
+/**
+ * 引擎页的激活桥：桥不存在时不订阅、不抛错，交回旧版 UI（单测只 mock 了部分客户端）。
+ * 桥存在时首帧就标记 available，先展示“读取中”而不是旧版云端配置，避免托管态闪现输入框。
+ */
+export function useManagedAsrActivation(): ManagedAsrActivation {
+  // 用 `in` 判存在再取值：旧单测的 client mock 没有 activationApi，直接取命名绑定会抛错。
+  const bridge = 'activationApi' in clientBridge ? clientBridge.activationApi : undefined;
+  const available = bridge !== undefined;
+  const [snapshot, setSnapshot] = useState<ActivationSnapshot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (bridge === undefined) return undefined;
+    let disposed = false;
+    const off =
+      typeof bridge.onChange === 'function'
+        ? bridge.onChange((next) => {
+            if (!disposed) setSnapshot(next);
+          })
+        : (): void => undefined;
+    bridge
+      .status(false)
+      .then((next) => {
+        if (!disposed) setSnapshot(next);
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) setError(activationErrorText(cause));
+      });
+    return () => {
+      disposed = true;
+      off();
+    };
+  }, [bridge]);
+  const recheck = useCallback((): void => {
+    if (bridge === undefined) return;
+    setBusy(true);
+    bridge
+      .status(true)
+      .then((next) => {
+        setSnapshot(next);
+      })
+      .catch((cause: unknown) => {
+        setError(activationErrorText(cause));
+      })
+      .finally(() => {
+        setBusy(false);
+      });
+  }, [bridge]);
+  return { snapshot, available, busy, error, recheck };
+}
+
 /** 生效卡「测连接」按钮（云端生效时替换「校验资产」位）。 */
 export function CloudTestButton({ config, domain }: { config: EngineConfig; domain: string }): ReactElement {
   const { message } = AntdApp.useApp();
   const [testing, setTesting] = useState(false);
   const onTest = (): void => {
     setTesting(true);
-    engineConfigsApi
+    clientBridge.engineConfigsApi
       .test({ domain, id: config.id, base_url: config.base_url, api_key: '', model: config.model })
       .then((res) => {
         if (res.ok) message.success(`连接正常 · ${String(res.latency_s ?? 0)}s`);
@@ -172,7 +238,7 @@ export function CloudConfigsPane({
   const presets = CLOUD_PRESETS[domain];
   const onTest = (config: EngineConfig): void => {
     setTests((prev) => ({ ...prev, [config.id]: { ok: true, text: '测试中…' } }));
-    engineConfigsApi
+    clientBridge.engineConfigsApi
       .test({ domain, id: config.id, base_url: config.base_url, api_key: '', model: config.model })
       .then((res) => {
         setTests((prev) => ({

@@ -74,6 +74,14 @@ def test_edge_short_text_takes_the_single_request_path(
 # ---------------------------------------------------------------- kokoro（numpy 拼接）
 
 
+@pytest.fixture(autouse=True)
+def _force_kokoro_inproc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """假 pipeline 只在进程内路径生效：开发机未装 kokoro 时也强制走该分支。"""
+    from dramaclip.engines.tts.engines import kokoro as kokoro_mod
+
+    monkeypatch.setattr(kokoro_mod, "_kokoro_importable", lambda: True)
+
+
 class _FakePipeline:
     def __init__(self) -> None:
         self.calls: list[str] = []

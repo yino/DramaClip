@@ -1,43 +1,25 @@
-/** 无剧时的主区引导（规格 §4.1 空态 + §4.2 首启三步）。它必须给出唯一那个 primary，
- *  因为有剧时 primary 在 PageHeader 上、空态时不在——两处都放会违反
- *  DSS §3.1「每屏 primary 至多 1 个」。三步引导自身的勾选逻辑在 OnboardingSteps。 */
+/** 无剧时的主区引导（规格 desktop-workbench 空态）：只给文件导入承诺与唯一 primary；
+ *  不出现模型、引擎、本地运行环境等安装引导。 */
 import { cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmptyWorkbench } from '../EmptyWorkbench';
 
-vi.mock('../../../services/client', () => ({
-  localRuntimeApi: {
-    status: vi.fn(() =>
-      Promise.resolve({
-        installed: true, dir: '', torch_variant: 'cuda',
-        groups: { indextts: true, funasr: true, kokoro: true, torch: true },
-      }),
-    ),
-    install: vi.fn(() => Promise.resolve({ job_id: 'j' })),
-  },
-}));
-
 afterEach(cleanup);
 
-function renderEmpty(models: Parameters<typeof EmptyWorkbench>[0]['models'] = null, llmBaseUrl = '') {
+function renderEmpty(creating = false) {
   const onCreate = vi.fn();
-  const view = render(
-    <MemoryRouter>
-      <EmptyWorkbench creating={false} onCreate={onCreate} models={models} llmBaseUrl={llmBaseUrl} />
-    </MemoryRouter>,
-  );
+  const view = render(<EmptyWorkbench creating={creating} onCreate={onCreate} />);
   return { ...view, onCreate };
 }
 
 describe('EmptyWorkbench', () => {
-  it('一句话说清开始形态（三步引导 + 素材已在本地）', () => {
+  it('一句话说清开始形态：整部短剧进来，素材位置不变', () => {
     renderEmpty();
-    expect(screen.getByText(/三步开始/)).toBeTruthy();
-    expect(screen.getByText('装一个 ASR 模型')).toBeTruthy();
+    expect(screen.getByText(/把整部短剧放进来/)).toBeTruthy();
+    expect(screen.getByText('选择多个视频文件即可建剧，素材留在原位置。')).toBeTruthy();
   });
 
-  it('primary 仍只有一个（新增项目）；三步的直达入口是普通按钮不算 primary', () => {
+  it('primary 仍只有一个（新增项目），点击开始建剧', () => {
     const { onCreate } = renderEmpty();
     const primaries = document.querySelectorAll<HTMLElement>('.ant-btn-primary');
     expect(primaries).toHaveLength(1);
@@ -47,21 +29,31 @@ describe('EmptyWorkbench', () => {
   });
 
   it('建剧中时按钮进 loading 且不可再点', () => {
-    render(
-      <MemoryRouter>
-        <EmptyWorkbench creating onCreate={vi.fn()} models={null} llmBaseUrl="" />
-      </MemoryRouter>,
-    );
-    // 「新增项目」有两个命中（三步引导的步名 + primary 按钮）：primary 只有一个
+    renderEmpty(true);
     const primary = document.querySelector<HTMLElement>('.ant-btn-primary');
     expect(primary?.textContent).toContain('新增项目');
     expect(primary?.hasAttribute('disabled')).toBe(true);
   });
 
-  it('不承诺任何未实装的能力（无拖放、无下载短剧、无网盘）', () => {
+  it('不出现模型/引擎/环境安装引导，也不承诺未实装能力', () => {
     const { container } = renderEmpty();
     const text = container.textContent;
-    for (const banned of ['拖', '下载短剧', '网盘', '授权书', '即将']) {
+    for (const banned of [
+      '环境就绪度',
+      '本地运行环境',
+      'FFmpeg',
+      '模型',
+      'LLM',
+      '装一个',
+      '三步开始',
+      '去下载',
+      '去配置',
+      '拖',
+      '下载短剧',
+      '网盘',
+      '授权书',
+      '即将',
+    ]) {
       expect(text, `空态文案里出现了 ${banned}`).not.toContain(banned);
     }
   });

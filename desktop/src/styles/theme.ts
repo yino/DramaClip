@@ -10,25 +10,25 @@ const SPACING = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32, xxxxl
 
 export const tokens = {
   // ---- 色彩 ----
-  colorPrimary: '#7C9CFF',
-  colorPrimaryHover: '#93AEFF',
-  colorPrimaryActive: '#6A8AE8',
-  colorAccent: '#9B7BFF',
+  colorPrimary: '#A18CFF',
+  colorPrimaryHover: '#B7A7FF',
+  colorPrimaryActive: '#8B75ED',
+  colorAccent: '#D3C7FF',
   colorSuccess: '#34D399',
   colorWarning: '#FBBF24',
   colorError: '#F87171',
   colorInfo: '#60A5FA',
   colorWhite: '#FFFFFF',
-  bgSidebar: '#0A0F1E',
-  bgLayout: '#0F1526',
-  bgContainer: '#161E33',
-  bgElevated: '#1C2540',
-  bgInput: '#131A2E',
-  border: '#2A3550',
-  borderSecondary: '#1F2942',
-  accentSoft: 'rgba(124,156,255,0.12)',
+  bgSidebar: '#080D19',
+  bgLayout: '#0C1221',
+  bgContainer: '#121A2C',
+  bgElevated: '#182239',
+  bgInput: '#10182A',
+  border: '#283754',
+  borderSecondary: '#1D2942',
+  accentSoft: 'rgba(161,140,255,0.13)',
   /** 已勾选行底（§3.2 唯一铺底语义）：比 accentSoft 更浅一档，不与悬停、当前查看抢通道。 */
-  checkedSoft: 'rgba(124,156,255,0.07)',
+  checkedSoft: 'rgba(161,140,255,0.07)',
   /** 状态色软底（§3.4）：原先 1A/44/0d/55/12 五种模板拼色表达的是同一件语义。
    * 半透明档只管铺色；框线一律读 border——用同档 Soft 描边等于描了条看不见的边。 */
   successSoft: 'rgba(52,211,153,0.12)',
@@ -44,27 +44,35 @@ export const tokens = {
   posterCaption: 'rgba(0,0,0,0.72)',
   /** 压在海报上的浮板（集数芯片、更多按钮）：原先 0.55 / 0.45 两档表达同一件语义。 */
   posterPlate: 'rgba(0,0,0,0.55)',
-  gradientAccent: 'linear-gradient(135deg, #6D9BFF 0%, #9B7BFF 100%)',
-  textPrimary: '#F0F4FF',
-  textSecondary: '#A8B4CE',
-  textTertiary: '#5E6C8C',
+  gradientAccent: 'linear-gradient(135deg, #806FF3 0%, #B49CFF 100%)',
+  textPrimary: '#F5F2FF',
+  textSecondary: '#B6BDD2',
+  textTertiary: '#7884A4',
   /** 界面字面栈（§7.1）：随包 Inter + 思源子集打头，系统字面只作兜底。
    *  思源用自别名 'DramaClip SC' 而非本名：随包的是「简体子集、无西文」，
    *  占用本名会把使用者机器上完整版的 Noto Sans SC 顶掉，反而不可复核。 */
   fontFamilyUi: "'Inter', 'DramaClip SC', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif",
   fontFamilyMono: "'JetBrains Mono', 'Cascadia Mono', Consolas, monospace",
   // ---- CSS 侧氛围与控件色（§7.1：global.css 不得藏第二处色值真相，全部在此登记） ----
-  scrollThumb: '#262F47',
-  scrollThumbHover: '#3D4D73',
-  selectionBg: 'rgba(124,156,255,0.28)',
+  scrollThumb: '#283552',
+  scrollThumbHover: '#40517A',
+  selectionBg: 'rgba(161,140,255,0.28)',
   /** 背景双辐射光斑：左上主靛 5% / 右下紫 3.8%，克制到近乎看不出来才叫氛围层。 */
-  ambientPrimary: 'rgba(124,156,255,0.05)',
-  ambientAccent: 'rgba(155,123,255,0.038)',
-  cardTopHighlight: 'rgba(255,255,255,0.045)',
+  ambientPrimary: 'rgba(117,103,255,0.07)',
+  ambientAccent: 'rgba(172,146,255,0.045)',
+  cardTopHighlight: 'rgba(255,255,255,0.05)',
   shadowHover: '0 6px 18px rgba(0,0,0,0.35)',
-  shadowPrimary: '0 2px 8px rgba(124,156,255,0.28)',
+  shadowPrimary: '0 8px 24px rgba(110,90,235,0.24)',
   /** 主按钮渐变 = 主色→强调色；与 gradientAccent（#6D9BFF 起）不是同一枚，别合并。 */
-  gradientPrimary: 'linear-gradient(135deg, #7C9CFF 0%, #9B7BFF 100%)',
+  gradientPrimary: 'linear-gradient(135deg, #8B76F3 0%, #B8A0FF 100%)',
+  homeHalo: 'radial-gradient(circle at 76% 12%, rgba(151,122,255,0.16), transparent 44%)',
+  homeCardSheen: 'linear-gradient(145deg, rgba(26,35,58,0.96) 0%, rgba(15,22,39,0.96) 100%)',
+  homePreviewScrim: 'linear-gradient(180deg, rgba(5,8,15,0.02) 24%, rgba(5,8,15,0.86) 100%)',
+  homePosterFallback: 'linear-gradient(155deg, #263459 0%, #5F49A8 48%, #171E34 100%)',
+  homePosterWarm: 'linear-gradient(155deg, #3D2A4F 0%, #A35D7C 48%, #19182A 100%)',
+  homePosterDim: 'linear-gradient(155deg, #162B3A 0%, #44719B 44%, #121827 100%)',
+  homeHairline: 'rgba(255,255,255,0.08)',
+  homeFocus: 'rgba(177,158,255,0.72)',
 
   // ---- 间距（px 字符串，模板插值安全） ----
   spaceXs: `${String(SPACING.xs)}px`,
@@ -80,6 +88,7 @@ export const tokens = {
   // weight 给中文标题（思源 500），weightLatin 给西文与数字（Inter 600）——
   // 同一数值下两款字面观感不等重，写死一个数会让标题一半重一半轻（§1.2 ③）。
   text: {
+    heroTitle: { size: '38px', leading: '48px', weight: 500, weightLatin: 600 },
     pageTitle: { size: '28px', leading: '36px', weight: 500, weightLatin: 600 },
     sectionTitle: { size: '20px', leading: '28px', weight: 600, weightLatin: 600 },
     cardTitle: { size: '16px', leading: '24px', weight: 600, weightLatin: 600 },
@@ -137,17 +146,24 @@ export const layout = {
   field: { labelWidth: 250, controlWidth: 320, labelPaddingTop: 6, helpMarginTop: 3 },
   controlHeight: { sm: 28, md: 32 },
   rail: {
-    width: 68,
-    button: { width: 54, height: 52 },
-    divider: { width: 40 },
+    width: 220,
+    button: { width: 188, height: 42 },
+    divider: { width: 188 },
   },
   titleBar: {
-    height: 46,
-    paddingX: tokens.spaceLg,
-    brand: 22,
-    windowButton: { width: 44 },
+    height: 64,
+    paddingX: tokens.space2xl,
+    brand: 30,
+    windowButton: { width: 38 },
     /** 搜索框：clearance 是给放大镜与角标让位的宽度，不是间距档位，故逐值登记。 */
-    search: { width: 340, clearanceLeft: 28, clearanceRight: 44, iconInset: tokens.spaceSm, resultsOffset: 32 },
+    search: {
+      width: 370,
+      leftOffset: 100,
+      clearanceLeft: 32,
+      clearanceRight: 44,
+      iconInset: tokens.spaceMd,
+      resultsOffset: 40,
+    },
   },
   statusBar: { height: 26, paddingX: tokens.spaceLg },
   footer: { height: 46, paddingX: tokens.spaceLg },
@@ -184,6 +200,16 @@ export const layout = {
   monoAlignTop: 2,
   /** 主从编辑器左栏：五值原样搬入，只消灭散落在三处的同源数（§2）。 */
   split: { initial: 24, min: 20, max: 40, minWidth: 250, handle: 6, paddingX: tokens.spaceLg },
+  /** 首页主卡与引导卡：桌面宽度下让镜头条完整露出，窄屏再折成一列。 */
+  home: {
+    outerPaddingX: tokens.spaceXs,
+    topGap: tokens.spaceXl,
+    heroPadding: tokens.space3xl,
+    heroPreviewWidth: 112,
+    heroPreviewHeight: 184,
+    guideHeight: 178,
+    folderTreeWidth: 360,
+  },
 } as const;
 
 /**
@@ -205,6 +231,7 @@ export const cssVars = {
   'dc-shadow-hover': tokens.shadowHover,
   'dc-shadow-primary': tokens.shadowPrimary,
   'dc-gradient-primary': tokens.gradientPrimary,
+  'dc-home-focus': tokens.homeFocus,
 } as const;
 
 /** 把 cssVars 注到 :root。CSS 拿不到 TS，只能在此单点导出后由入口注入——不注入这些 var 全部悬空。 */

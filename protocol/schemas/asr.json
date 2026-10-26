@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dramaclip.dev/protocol/asr.json",
+  "title": "asr 命名空间",
+  "namespace": "asr",
+  "x-models": {
+    "AsrCredits": {
+      "type": "object",
+      "required": ["available", "limit", "used", "remaining", "unit", "updated_at"],
+      "properties": {
+        "available": { "type": "boolean" },
+        "limit": { "type": "number" },
+        "used": { "type": "number" },
+        "remaining": { "type": "number" },
+        "unit": { "type": "string", "enum": ["minute"] },
+        "updated_at": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    }
+  },
+  "x-methods": [
+    {
+      "name": "asr.credits",
+      "summary": "云端识别积分余额（只读；拿不到时 available=false + 可读原因，不抛错）",
+      "params": { "type": "object", "properties": {} },
+      "result": { "$ref": "#/x-models/AsrCredits" }
+    }
+  ]
+}

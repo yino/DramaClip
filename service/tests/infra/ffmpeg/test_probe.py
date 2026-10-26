@@ -17,6 +17,13 @@ def test_probe_returns_media_info(sample_video: Path) -> None:
     assert media.has_audio
 
 
+def test_decodes_first_frame(sample_video: Path, tmp_path: Path) -> None:
+    assert probe.decodes_first_frame(sample_video)
+    bogus = tmp_path / "broken.mp4"
+    bogus.write_bytes(b"not a video")
+    assert not probe.decodes_first_frame(bogus)
+
+
 def test_probe_rejects_non_media(tmp_path: Path) -> None:
     bogus = tmp_path / "not-a-video.mp4"
     bogus.write_text("hello", encoding="utf-8")

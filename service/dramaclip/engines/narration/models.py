@@ -78,3 +78,6 @@ class PlanData(BaseModel):
     # 候选冲突窗（分值序）：超短钩子出片时按实测旁白时长二次选景用。
     # 旧库行缺该键 → 空表，布局退回时间轴里的冲突窗原位放置。
     scene_pool: list[SceneCandidate] = Field(default_factory=list)
+    # 规划期已知的不可出片原因（如素材太短放不下钩子/CTA 预算）：空串 = 无。
+    # 进转化门禁后方案落 draft，方案卡直接显示这句人话，不留到出片时才报错。
+    planning_issue: str = ""

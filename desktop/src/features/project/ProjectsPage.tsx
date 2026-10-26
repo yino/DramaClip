@@ -9,7 +9,8 @@ import { scheduleCoverBackfill } from '../../services/coverBackfill';
 import { PageHeader, PageShell } from '../../components/layout/PageKit';
 import { FolderAddOutlined } from '@ant-design/icons';
 import { LibraryGrid } from './LibraryGrid';
-import { CreateProjectModal, RenameModal } from './ProjectModals';
+import { CreateProjectModal } from './CreateProjectModal';
+import { RenameModal } from './ProjectModals';
 import { useLibraryFacts } from './useLibraryFacts';
 import { useProjects, type ProjectsController } from './useProjects';
 
@@ -95,7 +96,7 @@ export function ProjectsPage() {
     <PageShell>
       <PageHeader
         title="项目管理"
-        desc="素材已在本地：选文件夹建剧，分析完成后进入出片"
+        desc="素材留在原位置：选文件夹或多选视频文件建剧，分析完成后进入出片"
         actions={
           isEmpty ? undefined : (
             <Button type="primary" icon={<FolderAddOutlined />} onClick={openCreate}>
@@ -120,7 +121,7 @@ export function ProjectsPage() {
       <CreateProjectModal
         open={createOpen}
         onClose={() => { setCreateOpen(false); }}
-        onCreate={controller.create}
+        onCreate={controller.createFromFiles}
       />
       <RenameModal target={rename.target} onClose={rename.close} onRename={rename.submit} />
     </PageShell>

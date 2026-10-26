@@ -24,6 +24,8 @@ files:
 # 模型/缓存（手册指引的手动导入是放 data/models，但保不齐有人放错），都不许混进安装包。
 # 模型一律走引擎中心按需下载，不随包。
 extraResources:
+  # 局域网部署的激活/云端网关地址；打包态由 gateway-client.ts 优先读取。
+  - { from: ../resources/gateway.json, to: app-resources/gateway.json }
   - { from: ../resources/ffmpeg, to: app-resources/ffmpeg }
   - { from: ../resources/fonts, to: app-resources/fonts }
   - { from: ../resources/face-detect, to: app-resources/face-detect }

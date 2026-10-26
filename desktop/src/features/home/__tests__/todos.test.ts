@@ -1,17 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelInfo } from '@dramaclip/protocol';
 import { buildDramas, buildTodos, type DramaState, type FailedJob, type TodoInput } from '../todos';
 import type { TodoItem } from '../todos';
 const NOW = 1_760_000_000_000;
 const DAY = 86_400_000;
-
-function model(over: Partial<ModelInfo> = {}): ModelInfo {
-  return {
-    model_id: 'asr-small', kind: 'asr', engine: 'faster_whisper',
-    repo_id: 'Systran/faster-whisper-small', name: 'Whisper small',
-    required: true, status: 'installed', engine_ready: true, ...over,
-  };
-}
 
 function drama(over: Partial<DramaState> & { id: string }): DramaState {
   return {
@@ -26,7 +17,7 @@ function job(over: Partial<FailedJob> = {}): FailedJob {
 
 function base(over: Partial<TodoInput> = {}): TodoInput {
   return {
-    serviceDown: false, models: [model()], llmConfigured: true,
+    serviceDown: false,
     dramas: [], failedJobs: [], serverTimeMs: NOW,
     jobsAvailable: true, jobsError: null, ...over,
   };
@@ -39,25 +30,17 @@ describe('buildTodos', () => {
     expect(buildTodos(base())).toEqual([]);
   });
 
+  it('只生成任务类待办，不掺模型/引擎就绪度', () => {
+    const items = buildTodos(base({ failedJobs: [job()] }));
+    const text = items.map((item) => `${item.text} ${item.detail ?? ''}`).join(' ');
+    expect(text).not.toMatch(/模型|LLM|引擎|运行环境/);
+    expect(keys(items)).toEqual(['job-j1']);
+  });
+
   it('服务不可用给重启动作', () => {
     const items = buildTodos(base({ serviceDown: true }));
     expect(items[0]?.severity).toBe('error');
     expect(items[0]?.action).toEqual({ kind: 'restart-service', label: '重启服务' });
-  });
-
-  it('缺必需模型 → 去下载', () => {
-    const items = buildTodos(base({ models: [model({ status: 'missing' })] }));
-    expect(items[0]?.action).toEqual({ kind: 'navigate', label: '去下载', path: '/engines/asr' });
-  });
-
-  it('models 为 null 不得谎报缺模型', () => {
-    expect(buildTodos(base({ models: null }))).toEqual([]);
-  });
-
-  it('未配编剧模型是 error 级', () => {
-    const items = buildTodos(base({ llmConfigured: false }));
-    expect(items[0]?.severity).toBe('error');
-    expect(items[0]?.text).toContain('七个解说模式');
   });
 
   it('analysis 失败 → 跳分析页', () => {

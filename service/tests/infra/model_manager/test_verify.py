@@ -189,7 +189,8 @@ def test_engine_ready_asr_follows_the_analysis_runtime_dispatch() -> None:
     assert registry.engine_ready(_spec("sensevoice-small")) is True
     assert registry.engine_ready(_spec("paraformer-large")) is True
     wired = {s.engine for s in builtin_specs() if s.kind == "asr" and registry.engine_ready(s)}
-    assert wired == set(asr_supported())
+    # 托管云端识别由激活供给、不在模型清单里，故不参与「清单行 ↔ 工厂」对账。
+    assert wired == set(asr_supported()) - {"cloud_gateway"}
 
 
 def test_dead_firedred_branch_is_gone_from_the_runtime() -> None:

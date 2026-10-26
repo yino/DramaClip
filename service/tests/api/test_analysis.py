@@ -17,6 +17,7 @@ import pytest
 from dramaclip.api import analysis as analysis_api
 from dramaclip.api import analysis_job as analysis_job
 from dramaclip.api import project as project_api
+from dramaclip.api.ingest_guard import active_ingest_job
 from dramaclip.engines.analysis import pipeline, subtitle_ocr
 from dramaclip.engines.analysis.models import AsrSegment, AudioFeatures, OcrSegment
 from dramaclip.infra import jobs
@@ -506,6 +507,50 @@ def test_scan_without_threshold_setting_does_not_autostart(
     project_id = _make_project(harness, tmp_path, sample_video, copies=1)
     jobs = [job for job in harness.context.job_store.list_recent() if job["ref_id"] == project_id]
     assert jobs == []
+
+
+def test_active_ingest_job_tracks_only_this_projects_running_jobs(
+    memory_db: sqlite3.Connection,
+) -> None:
+    project_id = str(projects_repo.create(memory_db, "互斥剧", "/media/mutex")["id"])
+    other_id = str(projects_repo.create(memory_db, "别的剧", "/media/other")["id"])
+    store = jobs.JobStore(memory_db)
+
+    assert active_ingest_job(memory_db, project_id) is None
+    store.create("analysis", ref_id=other_id)
+    store.create("export", ref_id=project_id)  # 非导入类任务不算互斥
+    assert active_ingest_job(memory_db, project_id) is None
+
+    analysis_id = store.create("analysis", ref_id=project_id)
+    active = active_ingest_job(memory_db, project_id)
+    assert active is not None and active["id"] == analysis_id
+    assert active_ingest_job(memory_db, other_id) is not None, "别的项目有自己的任务"
+
+    store.mark_completed(analysis_id)
+    assert active_ingest_job(memory_db, project_id) is None, "终态任务不再互斥"
+
+    prescreen_id = store.create("prescreen", ref_id=project_id)
+    active = active_ingest_job(memory_db, project_id)
+    assert active is not None and active["id"] == prescreen_id
+
+    store.mark_failed(prescreen_id, "boom")
+    assert active_ingest_job(memory_db, project_id) is None
+
+
+def test_autostart_skips_when_project_already_has_active_ingest_job(
+    harness: Harness, memory_db: sqlite3.Connection, tmp_path: Path
+) -> None:
+    """同项目已有分析/预筛在跑：扫集后不得再起一个并发作业。"""
+    harness.context.settings["analysis.full_threshold"] = "15"
+    project_id = str(projects_repo.create(memory_db, "手动项目", str(tmp_path))["id"])
+    running_id = harness.context.job_store.create("analysis", ref_id=project_id)
+
+    assert analysis_api.autostart_after_scan(harness.context, project_id, 1) is None
+
+    project_jobs = [
+        job for job in harness.context.job_store.list_recent() if job["ref_id"] == project_id
+    ]
+    assert [job["id"] for job in project_jobs] == [running_id]
 
 
 def test_results_sets_clipping_when_audio_features_clip(

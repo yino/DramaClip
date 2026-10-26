@@ -1,26 +1,26 @@
-/** 工作台（规格 §4.1 + 卷三意见 04）：回答"今天该干什么"。
+/** 工作台（规格 desktop-workbench）：回答"今天该干什么"。
  *
- * 主区 = 今日待办（首要）+ 我的剧矩阵（吸收原三统计芯片/最近成品/继续上次）
- * 右栏 = 环境就绪度 + 快速上手
+ * 主区 = 继续创作 / 空态引导 + 成品类型说明，下方承接待办与剧矩阵。
+ * 工作台不设环境/引擎右栏：模型、本地运行环境、FFmpeg 只在引擎中心、设置、
+ * 关于页出现（规格「工作台不展示模型与环境信息」）。
  *
  * 原六块变四块的理由：芯片/成品/继续卡片各自只有一行信息量，摊开是三块地皮；
  * 矩阵一行一部剧，把同一部剧的阶段、卡点、成品数、继续入口收进一眼（卷三图 1）。
  * 「继续上次」不再是独立卡片——最近打开的剧在矩阵置顶 + 铺底 + 芯片点名。
- *
- * 右栏的「工具箱」槽位缺席：真工具箱属 P-3.4。缺席而非假控件。
  */
-import { FolderAddOutlined } from '@ant-design/icons';
-import { App as AntdApp, Button } from 'antd';
+import { App as AntdApp } from 'antd';
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { JobInfo } from '@dramaclip/protocol';
-import { PageHeader, PageShell } from '../../components/layout/PageKit';
+import { PageShell } from '../../components/layout/PageKit';
+import { CreateProjectModal } from '../project/CreateProjectModal';
+import { useCreateProject } from '../project/useProjects';
 import { restartService } from '../../services/client';
 import { tokens } from '../../styles/theme';
-import { createDramaFromFolder } from './createDrama';
 import { DramaMatrix } from './DramaMatrix';
-import { EmptyWorkbench } from './EmptyWorkbench';
-import { EnvPanel, TipsPanel } from './EnvPanel';
+import { EmptyWorkbench, HomeGuide } from './EmptyWorkbench';
+import { HomeCapabilityPanel } from './HomeCapabilityPanel';
+import { ContinueHero } from './HomeContinueHero';
 import { TodoList } from './TodoList';
 import { buildStats, type WorkbenchStats } from './stats';
 import { buildDramas, buildTodos, type FailedJob, type TodoItem } from './todos';
@@ -31,27 +31,20 @@ import { useWorkbench, type WorkbenchData } from './useWorkbench';
  *  model_id），把它们的 ref_id 当 project_id 拼路径会跳错剧。 */
 const PROJECT_JOB_TYPES = new Set(['prescreen', 'analysis', 'narration']);
 
-/** 建剧与重启服务两个动作：状态 + 回调收拢，让 HomePage 只剩编排。 */
+/** 建剧与重启服务两个动作：状态 + 回调收拢，让 HomePage 只剩编排。
+ * 「新增项目」只开统一弹窗（4.4）：绝不先弹系统文件夹/文件对话框；
+ * 选文件与建项目都在弹窗内完成，成功后由 useCreateProject 跳转。 */
 function useHomeActions() {
-  const navigate = useNavigate();
   const { message } = AntdApp.useApp();
-  const [creating, setCreating] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const createProject = useCreateProject();
 
-  const onCreate = useCallback(() => {
-    setCreating(true);
-    createDramaFromFolder()
-      .then((created) => {
-        if (created === null) return;
-        message.success(`已创建「${created.name}」`);
-        void navigate(created.entryPath);
-      })
-      .catch((error: unknown) => {
-        message.error(error instanceof Error ? error.message : String(error));
-      })
-      .finally(() => {
-        setCreating(false);
-      });
-  }, [message, navigate]);
+  const openCreate = useCallback(() => {
+    setCreateOpen(true);
+  }, []);
+  const closeCreate = useCallback(() => {
+    setCreateOpen(false);
+  }, []);
 
   const onRestart = useCallback(() => {
     restartService().catch((error: unknown) => {
@@ -59,18 +52,16 @@ function useHomeActions() {
     });
   }, [message]);
 
-  return { creating, onCreate, onRestart };
+  return { createOpen, openCreate, closeCreate, createProject, onRestart };
 }
 
 export function HomePage() {
   const { data, ready } = useWorkbench();
-  const { creating, onCreate, onRestart } = useHomeActions();
+  const { createOpen, openCreate, closeCreate, createProject, onRestart } = useHomeActions();
 
   const dramas = buildDramas(data.projects, data.works);
   const todos = buildTodos({
     serviceDown: !ready,
-    models: data.models,
-    llmConfigured: data.llmBaseUrl !== '',
     dramas,
     failedJobs: failedJobs(data.jobs),
     jobsAvailable: data.jobsAvailable,
@@ -82,32 +73,22 @@ export function HomePage() {
 
   return (
     <PageShell>
-      <PageHeader
-        title="工作台"
-        desc={greetingLine()}
-        actions={
-          // 空态下 primary 归 EmptyWorkbench，这里不给——DSS §3.1「每屏 primary 至多 1 个」
-          hasDramas ? (
-            <Button type="primary" icon={<FolderAddOutlined />} loading={creating} disabled={creating} onClick={onCreate}>
-              新增项目
-            </Button>
-          ) : undefined
-        }
-      />
       <HomeBody
         data={data}
         todos={todos}
         stats={stats}
         hasDramas={hasDramas}
-        creating={creating}
-        onCreate={onCreate}
+        creating={false}
+        onCreate={openCreate}
         onRestart={onRestart}
       />
+      <CreateProjectModal open={createOpen} onClose={closeCreate} onCreate={createProject} />
     </PageShell>
   );
 }
 
-/** 双栏主体：左 = 待办 + 我的剧矩阵（或空态引导），右 = 环境 + 上手。 */
+/** 单列主体内部先铺一张双列引导台，再接待办与剧矩阵。
+ *  工作台不设环境/引擎右栏——那些信息只在引擎中心、设置、关于页出现。 */
 function HomeBody({
   data,
   todos,
@@ -128,40 +109,53 @@ function HomeBody({
   const navigate = useNavigate();
   return (
     <div
+      data-testid="home-body"
       style={{
         display: 'grid',
-        gridTemplateColumns: 'minmax(0,1fr) 330px',
-        gap: tokens.spaceLg,
-        alignItems: 'start',
+        gridTemplateColumns: 'minmax(0, 1fr)',
+        gap: tokens.space2xl,
+        minWidth: 0,
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spaceXl, minWidth: 0 }}>
-        <TodoList
-          items={todos}
-          onNavigate={(path) => {
-            void navigate(path);
-          }}
-          onRestartService={onRestart}
-        />
+      <div className="home-top-grid" style={{ gap: tokens.spaceXl }}>
         {hasDramas ? (
-          <DramaMatrix
+          <ContinueHero
             projects={data.projects}
             works={data.works}
             jobs={data.jobs}
             serverTimeMs={data.serverTimeMs}
-            etaLabel={stats.runningEtaLabel}
-            onNavigate={(route) => {
-              void navigate(route);
+            stats={stats}
+            onCreate={onCreate}
+            onNavigate={(path) => {
+              void navigate(path);
             }}
           />
         ) : (
-          <EmptyWorkbench creating={creating} onCreate={onCreate} models={data.models} llmBaseUrl={data.llmBaseUrl} />
+          <EmptyWorkbench creating={creating} onCreate={onCreate} />
         )}
+        <HomeCapabilityPanel />
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spaceLg }}>
-        <EnvPanel models={data.models} llmBaseUrl={data.llmBaseUrl} ttsEngine={data.ttsEngine} />
-        <TipsPanel />
-      </div>
+      <TodoList
+        items={todos}
+        onNavigate={(path) => {
+          void navigate(path);
+        }}
+        onRestartService={onRestart}
+      />
+      {hasDramas ? (
+        <DramaMatrix
+          projects={data.projects}
+          works={data.works}
+          jobs={data.jobs}
+          serverTimeMs={data.serverTimeMs}
+          etaLabel={stats.runningEtaLabel}
+          onNavigate={(route) => {
+            void navigate(route);
+          }}
+        />
+      ) : (
+        <HomeGuide />
+      )}
     </div>
   );
 }
@@ -200,11 +194,3 @@ function buildStatsFromData(data: WorkbenchData): WorkbenchStats {
   });
 }
 
-function greetingLine(): string {
-  const now = new Date();
-  const week = ['日', '一', '二', '三', '四', '五', '六'][now.getDay()] ?? '';
-  const hour = now.getHours();
-  const greeting =
-    hour < 6 ? '夜深了' : hour < 12 ? '上午好' : hour < 14 ? '中午好' : hour < 18 ? '下午好' : '晚上好';
-  return `${greeting} · ${String(now.getMonth() + 1)}月${String(now.getDate())}日 星期${week}`;
-}

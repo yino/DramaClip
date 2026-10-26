@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  collectPreviewRoots,
   createPreviewHandler,
   createPreviewRoots,
   decodePreviewPath,
@@ -81,6 +82,61 @@ describe('createPreviewRoots', () => {
     expect(calls).toBe(3);
     expect(after).toContain('D:/mat-2'); // 失败保留旧围栏
     expect(after).toContain('D:/data');
+  });
+});
+
+describe('collectPreviewRoots', () => {
+  const folderRoot = path.resolve(tmpdir(), 'dc-folder-root');
+  const downloads = path.resolve(tmpdir(), 'dc-downloads');
+  const otherDir = path.resolve(tmpdir(), 'dc-other');
+
+  it('目录项目用 source_path；文件项目用 source_root，files: 伪路径不展开', async () => {
+    const roots = await collectPreviewRoots(
+      [
+        { id: 'a', source_path: folderRoot, source_root: folderRoot, source_kind: 'folder' },
+        {
+          id: 'b',
+          source_path: 'files:58cb1bbd',
+          source_root: downloads,
+          source_kind: 'files',
+        },
+      ],
+      () => Promise.reject(new Error('不应为有公共父目录的文件项目取集')),
+    );
+    expect(roots).toContain(folderRoot);
+    expect(roots).toContain(downloads);
+    expect(roots.some((item) => item.startsWith('files:'))).toBe(false);
+  });
+
+  it('旧服务缺 source_root：目录项目回退 source_path', async () => {
+    const roots = await collectPreviewRoots(
+      [{ id: 'a', source_path: folderRoot, source_kind: 'folder' }],
+      () => Promise.resolve([]),
+    );
+    expect(roots).toEqual([folderRoot]);
+  });
+
+  it('跨目录文件项目（source_root 空）：用每集源文件父目录，且单个项目取集失败不拖垮', async () => {
+    const roots = await collectPreviewRoots(
+      [
+        { id: 'a', source_path: 'files:aaa', source_root: '', source_kind: 'files' },
+        { id: 'b', source_path: 'files:bbb', source_root: '', source_kind: 'files' },
+      ],
+      (projectId) => {
+        if (projectId === 'a') return Promise.reject(new Error('rpc closed'));
+        return Promise.resolve([{ source_path: path.join(otherDir, 'ep1.mp4') }]);
+      },
+    );
+    expect(roots).toContain(otherDir);
+  });
+
+  it('混合项目：原目录 + 追加的外部集目录都进围栏', async () => {
+    const roots = await collectPreviewRoots(
+      [{ id: 'a', source_path: folderRoot, source_root: folderRoot, source_kind: 'mixed' }],
+      () => Promise.resolve([{ source_path: path.join(otherDir, 'extra.mp4') }]),
+    );
+    expect(roots).toContain(folderRoot);
+    expect(roots).toContain(otherDir);
   });
 });
 

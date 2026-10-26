@@ -15,6 +15,7 @@ import type { BlockNote } from '../stages/stageState';
 import { BlockNoteLine, StageMicro } from '../stages/StageMicro';
 import { menuFor, type MenuHandlers } from './dramaMenuItems';
 import { MoreButton } from './MoreButton';
+import { projectSourceLabel } from './projectSourceLabel';
 
 export interface DramaCardProps extends MenuHandlers {
   readonly row: MatrixRow;
@@ -80,7 +81,7 @@ function CardBody({
           lineHeight: tokens.text.badge.leading,
           color: tokens.textTertiary,
         }}
-        title={project.source_path}
+        title={projectSourceLabel(project)}
       >
         {`${String(project.episode_count)} 集 · ${factsMissing ? '—' : String(row.workCount)} 部成品`}
       </div>

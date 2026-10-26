@@ -150,6 +150,34 @@ describe('ActivationStore', () => {
     expect(reader.load()).toBeNull();
   });
 
+  it('deactivated 记录（token 已清空）可保存并读回，重启后仍能识别强制重授权', () => {
+    const store = new ActivationStore({ filePath, safeStorage: fakeSafeStorage() });
+    const saved = record({
+      token: '',
+      tokenId: '',
+      deactivated: { reason: 'token_revoked', at: '2026-10-24T07:00:00Z' },
+    });
+
+    store.save(saved);
+
+    expect(store.load()).toEqual(saved);
+    const raw = readFileSync(filePath, 'utf8');
+    expect(raw).not.toContain(saved.code);
+    expect(raw).not.toContain('token_revoked');
+  });
+
+  it('缺 token 且无 deactivated 的记录不可信', () => {
+    const store = new ActivationStore({ filePath, safeStorage: fakeSafeStorage() });
+    const invalid = record({ token: '', tokenId: '' });
+    const encrypted = fakeSafeStorage().encryptString(JSON.stringify(invalid));
+    writeFileSync(
+      filePath,
+      JSON.stringify({ version: 1, payload: encrypted.toString('base64') }),
+    );
+
+    expect(store.load()).toBeNull();
+  });
+
   it('clear 删除文件，重复 clear 不报错', () => {
     const store = new ActivationStore({ filePath, safeStorage: fakeSafeStorage() });
     store.save(record());

@@ -1,11 +1,13 @@
-/** 激活心跳状态机（desktop-activation D13/Q9）。
+/** 激活心跳状态机（desktop-activation D3/D13/Q9）。
  *
- * inactive → verifying → active ⇄ suspended(reason)。
+ * inactive → verifying → active ⇄ suspended(network)；
+ * 授权无效（停用/到期/顶号/吊销/凭证失效）→ reactivation_required(reason)。
  * - 默认 5 分钟一次，±10% 抖动；DRAMACLIP_HEARTBEAT_MS 由服务读取后传入；
  * - 启动 / 激活成功 / 系统恢复 / 手动重新校验都立即校验一次；
- * - 401 分流：token_superseded 直接 device_conflict（不重兑换）；其余 401 在
- *   「会话一次 + 距上次兑换 ≥10 分钟」守卫内自动重兑换一次；
- * - 其它失败（网络/超时/5xx/403/重兑换失败）→ suspended，并按 1→2→5 分钟退避重试；
+ * - 401 分流：token_superseded → device_conflict；token_revoked → token_revoked；
+ *   二者均不重兑换。仅 invalid_token 在「会话一次 + 距上次兑换 ≥10 分钟」守卫内重兑换；
+ * - 403 停用/到期直接进入 reactivation_required，不再安排心跳；
+ * - 仅网络/超时/5xx → suspended，并按 1→2→5 分钟退避重试；
  * - 校验成功恢复 active；解绑时 stop() 停表。
  *
  * 本模块只做纯状态机与定时器：网络/存储/设置写入都由注入的依赖完成，便于用假时钟单测。
@@ -107,14 +109,16 @@ export class ActivationHeartbeat {
     void this.runVerify(true);
   }
 
-  /** 系统 resume：只有已激活/暂停时才有意义。 */
+  /** 系统 resume：只有已激活/暂停时才有意义；强制重授权态不发请求。 */
   resume(): void {
     if (this.stopped || this.state.status === 'inactive') return;
+    if (this.state.status === 'reactivation_required') return;
     void this.runVerify(true);
   }
 
-  /** 手动「重新校验」：等待本次结果后返回最新状态。 */
+  /** 手动「重新校验」：强制重授权态直接返回当前快照，不发起网络请求。 */
   async recheck(): Promise<HeartbeatSnapshot> {
+    if (this.state.status === 'reactivation_required') return this.state;
     await this.runVerify(true);
     return this.state;
   }
@@ -141,6 +145,16 @@ export class ActivationHeartbeat {
     this.suspendAttempts = 0;
     this.lastRedeemAt = 0;
     this.transition(INACTIVE_HEARTBEAT);
+  }
+
+  /** 进入强制重授权：只改内存状态并停表，不再安排心跳。
+   *
+   * 清 token / 写 deactivated / 清托管设置由 ActivationService.forceReactivation 完成；
+   * 本方法不回调网络，也不自行重兑换。 */
+  markReactivationRequired(reason: ActivationSuspendedReason): void {
+    this.clearTimer();
+    this.suspendAttempts = 0;
+    this.transition({ ...this.state, status: 'reactivation_required', reason });
   }
 
   /** 停表（退出/解绑）；已发出的请求返回后被 stopped 拦截，不再改状态。 */
@@ -174,6 +188,13 @@ export class ActivationHeartbeat {
   private suspendTo(reason: ActivationSuspendedReason): void {
     this.suspendAttempts += 1;
     this.transition({ ...this.state, status: 'suspended', reason });
+  }
+
+  /** 授权无效：整屏阻断，停止心跳；不自动重兑换、不安排下一次请求。 */
+  private reactivateTo(reason: ActivationSuspendedReason): void {
+    this.clearTimer();
+    this.suspendAttempts = 0;
+    this.transition({ ...this.state, status: 'reactivation_required', reason });
   }
 
   private becomeActive(outcome: { plan: string; expiresAt: string }): void {
@@ -219,6 +240,7 @@ export class ActivationHeartbeat {
 
   private async runVerify(announce: boolean): Promise<void> {
     if (this.busy || this.stopped) return;
+    if (this.state.status === 'reactivation_required') return;
     this.busy = true;
     this.clearTimer();
     // 常规心跳不把界面闪回「校验中」；启动/暂停恢复/手动校验才展示 verifying
@@ -246,10 +268,10 @@ export class ActivationHeartbeat {
         this.becomeActive(outcome);
         return;
       case 'disabled':
-        this.suspendTo('disabled');
+        this.reactivateTo('disabled');
         return;
       case 'expired':
-        this.suspendTo('expired');
+        this.reactivateTo('expired');
         return;
       case 'failure':
         this.suspendTo('network');
@@ -259,21 +281,26 @@ export class ActivationHeartbeat {
     }
   }
 
-  /** 401 分流：superseded 不重兑换；其余 401 在守卫内重兑换一次。 */
+  /** 401 分流：吊销/顶号不重兑换；仅 invalid_token 在守卫内重兑换一次。 */
   private async handleUnauthorized(code: string): Promise<void> {
     // 令牌已被替代：说明另一台设备绑定了同一激活码，不自动重兑换（否则互相顶号）
     if (code === 'token_superseded') {
-      this.suspendTo('device_conflict');
+      this.reactivateTo('device_conflict');
+      return;
+    }
+    // 管理员吊销：不得用保存的激活码自动换新令牌，必须人工重新激活
+    if (code === 'token_revoked') {
+      this.reactivateTo('token_revoked');
       return;
     }
     const now = this.now();
     // 兑换后 60 秒内的 401 一律按设备冲突（防止 A/B 设备互相顶号抖动）
     if (this.lastRedeemAt > 0 && now - this.lastRedeemAt < REDEEM_CONFLICT_WINDOW_MS) {
-      this.suspendTo('device_conflict');
+      this.reactivateTo('device_conflict');
       return;
     }
     if (!this.canRedeem(now)) {
-      this.suspendTo('invalid_token');
+      this.reactivateTo('invalid_token');
       return;
     }
     let outcome: AuthorizationOutcome;
@@ -289,13 +316,13 @@ export class ActivationHeartbeat {
         this.becomeActive(outcome);
         return;
       case 'unauthorized':
-        this.suspendTo(outcome.code === 'token_superseded' ? 'device_conflict' : 'invalid_token');
+        this.reactivateTo(outcome.code === 'token_superseded' ? 'device_conflict' : 'invalid_token');
         return;
       case 'disabled':
-        this.suspendTo('disabled');
+        this.reactivateTo('disabled');
         return;
       case 'expired':
-        this.suspendTo('expired');
+        this.reactivateTo('expired');
         return;
       case 'failure':
         this.suspendTo('network');

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from dramaclip.engines.analysis.gateway_asr import GatewayCloudAsrEngine
 from dramaclip.engines.analysis.transcriber import (
     AsrEngine,
     DashscopeCloudAsrEngine,
@@ -17,6 +18,7 @@ from dramaclip.infra import config
 _LOGGER = logging.getLogger(__name__)
 
 _CLOUD_ASR_MODEL = "qwen-audio-3.1-asr-flash"
+_GATEWAY_ASR_MODEL = "fun-asr-flash"
 
 
 class AnalysisRuntime:
@@ -43,7 +45,7 @@ def supported() -> frozenset[str]:
     funasr 系（sensevoice/paraformer）E-2 起依赖本地运行环境：主 venv 装了 ml 组
     （dev/测试态）或本地智能运行环境带了 funasr 组（打包态按需装）二者其一才上清单。
     """
-    names = {"faster_whisper", "dashscope_cloud"}
+    names = {"faster_whisper", "dashscope_cloud", "cloud_gateway"}
     try:
         import funasr  # noqa: F401
 
@@ -80,10 +82,32 @@ def _resolve_diarization(
 
 
 def _build_transcriber(settings: config.Settings, models_dir: Path) -> AsrEngine:
-    engine = settings.get("asr.engine", "faster_whisper")
+    engine = settings.get("asr.engine", "cloud_gateway")
     if engine not in supported():
         available = " / ".join(sorted(supported()))
         raise ValueError(f"未知 ASR 引擎: {engine}（可用: {available}）")
+    if engine == "cloud_gateway":
+        # 缺配置在这里就炸成可读的一句，而不是等构建出空引擎、转写到一半才 401：
+        # 激活页失败的用户看到的是「去重新激活」，不是「云端转写失败」。
+        base_url = str(settings.get("asr.base_url", "")).strip()
+        token = str(settings.get("asr.api_key", "")).strip()
+        if not base_url:
+            raise ValueError(
+                "云端识别未配置 asr.base_url：请先在激活页完成激活，或切换到本地引擎"
+            )
+        if not token:
+            raise ValueError(
+                "云端识别缺少设备令牌（asr.api_key）：请先在激活页完成激活，或切换到本地引擎"
+            )
+        model = settings.get("asr.model", _GATEWAY_ASR_MODEL) or _GATEWAY_ASR_MODEL
+        return GatewayCloudAsrEngine(
+            base_url=base_url,
+            api_key=token,
+            model=model,
+            diarization=_resolve_diarization(
+                settings, engine=engine, supports=GatewayCloudAsrEngine.supports_model(model)
+            ),
+        )
     if engine == "dashscope_cloud":
         model = settings.get("asr.model", _CLOUD_ASR_MODEL) or _CLOUD_ASR_MODEL
         return DashscopeCloudAsrEngine(

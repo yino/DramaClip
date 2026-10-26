@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from dramaclip.infra.storage import db
+from dramaclip.infra.storage.repos import projects as projects_repo
 from dramaclip.infra.storage.repos import settings as settings_repo
 
 
@@ -56,11 +58,129 @@ def test_migrate_idempotent() -> None:
             "019_bgm_tracks.sql",
             "021_visual_track.sql",
             "022_plan_publish.sql",
+            "023_project_source_kind.sql",
         ]
         assert db.migrate(conn) == expected_migrations
         assert db.migrate(conn) == []  # 第二次全量跳过
     finally:
         conn.close()
+
+
+# ---- 023：项目来源类型（folder/files/mixed）与展示根 source_root ----
+
+
+def test_migration_023_backfills_legacy_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """存量库升级只加列不重建表：旧项目 source_kind=folder、source_root=原 source_path。"""
+    legacy_dir = tmp_path / "migrations"
+    legacy_dir.mkdir()
+    for sql_file in sorted(db.MIGRATIONS_DIR.glob("*.sql")):
+        if sql_file.name >= "023":
+            break
+        shutil.copy(sql_file, legacy_dir / sql_file.name)
+    conn = sqlite3.connect(
+        ":memory:", check_same_thread=False, factory=db.SerializedConnection
+    )
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(db, "MIGRATIONS_DIR", legacy_dir)
+            applied = db.migrate(conn)
+        assert "023_project_source_kind.sql" not in applied
+        conn.execute(
+            "INSERT INTO projects (id, name, source_path, status, created_at, updated_at)"
+            " VALUES ('legacy', '旧目录剧', '/media/dramas/old', 'created', 1, 1)"
+        )
+        conn.commit()
+        assert db.migrate(conn) == ["023_project_source_kind.sql"]
+        assert conn.execute(
+            "SELECT source_kind, source_root FROM projects WHERE id = 'legacy'"
+        ).fetchone() == ("folder", "/media/dramas/old")
+        assert db.migrate(conn) == []
+    finally:
+        conn.close()
+
+
+def test_projects_source_columns_have_safe_defaults(memory_db: sqlite3.Connection) -> None:
+    columns = {
+        str(row[1]): row
+        for row in memory_db.execute("PRAGMA table_info(projects)").fetchall()
+    }
+    assert columns["source_kind"][2:5] == ("TEXT", 1, "'folder'")
+    assert columns["source_root"][2:5] == ("TEXT", 1, "''")
+
+
+def test_projects_create_defaults_to_folder_source(memory_db: sqlite3.Connection) -> None:
+    created = projects_repo.create(memory_db, "目录剧", "/media/dramas/a")
+    assert created["source_kind"] == "folder"
+    assert created["source_root"] == "/media/dramas/a"
+    stored = projects_repo.get(memory_db, created["id"])
+    assert stored is not None
+    assert (stored["source_kind"], stored["source_root"]) == ("folder", "/media/dramas/a")
+    listed = projects_repo.list_all(memory_db)
+    assert [(p["source_kind"], p["source_root"]) for p in listed] == [
+        ("folder", "/media/dramas/a")
+    ]
+
+
+def test_projects_create_file_source_with_explicit_root(memory_db: sqlite3.Connection) -> None:
+    created = projects_repo.create(
+        memory_db,
+        "多选文件",
+        "builtin:import:abc",
+        source_kind="files",
+        source_root="/media/picked",
+    )
+    stored = projects_repo.get(memory_db, created["id"])
+    assert stored is not None
+    assert (stored["source_kind"], stored["source_root"]) == ("files", "/media/picked")
+
+
+def test_projects_create_cross_directory_files_have_empty_root(
+    memory_db: sqlite3.Connection,
+) -> None:
+    created = projects_repo.create(
+        memory_db, "跨目录", "builtin:import:def", source_kind="files", source_root=""
+    )
+    stored = projects_repo.get(memory_db, created["id"])
+    assert stored is not None and stored["source_root"] == ""
+
+
+def test_projects_create_commit_false_leaves_no_row_after_rollback(
+    memory_db: sqlite3.Connection,
+) -> None:
+    created = projects_repo.create(memory_db, "未提交", "/media/dramas/x", commit=False)
+    memory_db.rollback()
+    assert projects_repo.get(memory_db, created["id"]) is None
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "source_root"),
+    [("folder", None), ("files", "/media/picked"), ("mixed", "/media/mixed")],
+)
+def test_projects_duplicate_copies_source_fields(
+    memory_db: sqlite3.Connection, source_kind: str, source_root: str | None
+) -> None:
+    original = projects_repo.create(
+        memory_db, "原项目", "/media/dramas/a", source_kind=source_kind, source_root=source_root
+    )
+    copied = projects_repo.duplicate(memory_db, original["id"], "原项目（副本）")
+    assert copied is not None
+    assert copied["source_kind"] == source_kind
+    assert copied["source_root"] == original["source_root"]
+    assert copied["source_path"].startswith(f"{original['source_path']}#copy-")
+
+
+def test_projects_legacy_row_reads_as_folder(memory_db: sqlite3.Connection) -> None:
+    """迁移前的存量行读出来必须是 folder（列默认值兜底，024 前的手工 INSERT 同理）。"""
+    memory_db.execute(
+        "INSERT INTO projects (id, name, source_path, status, created_at, updated_at)"
+        " VALUES ('old', '旧项目', '/media/old', 'created', 1, 1)"
+    )
+    memory_db.commit()
+    project = projects_repo.get(memory_db, "old")
+    assert project is not None
+    assert project["source_kind"] == "folder"
 
 
 def test_settings_roundtrip(memory_db: sqlite3.Connection) -> None:

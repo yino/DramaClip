@@ -108,6 +108,10 @@ export interface Project {
   readonly id: string;
   readonly name: string;
   readonly source_path: string;
+  /** 来源类型：folder=整目录扫描，files=多选文件，mixed=目录项目又追加了外部文件；缺省=旧服务按 folder。 */
+  readonly source_kind?: ProjectSourceKind;
+  /** 来源展示根：目录=目录，文件=公共父目录（跨目录为空串→「多个位置」），mixed=原目录；缺省回退 source_path。 */
+  readonly source_root?: string;
   readonly status: string;
   readonly created_at: number;
   readonly episode_count: number;
@@ -145,6 +149,47 @@ export interface ScannedEpisode {
   readonly duration: number;
   readonly size_bytes: number;
   readonly has_audio: boolean;
+}
+
+/** 项目来源类型：目录扫描 / 多选文件 / 目录项目追加外部文件后的混合态。 */
+export type ProjectSourceKind = 'folder' | 'files' | 'mixed';
+
+/** 导入跳过原因，与服务端 project_import.SKIP_REASONS 一一对应。 */
+export type SkippedReason =
+  | 'missing'
+  | 'unreadable'
+  | 'unsupported'
+  | 'duplicate'
+  | 'probe_failed';
+
+/** 被跳过的一个所选路径；path 原样回显用户选的那条，便于界面定位。 */
+export interface SkippedFile {
+  readonly path: string;
+  readonly reason: SkippedReason;
+}
+
+/** 原生多选对话框的单个结果（主进程 fs.stat 后给出 name/size）；与 dialog.ts 同构。 */
+export interface PickedVideoFile {
+  readonly path: string;
+  readonly name: string;
+  readonly size: number;
+}
+
+/** project.create_from_files 的返回：项目 + 已登记集 + 跳过报告（全部无效返回 -32103）。 */
+export interface CreateProjectFromFilesResult {
+  readonly project: Project;
+  readonly episodes: Episode[];
+  readonly skipped: SkippedFile[];
+}
+
+/** 兼容别名：任务/评审里也写作 CreateProjectResult。 */
+export type CreateProjectResult = CreateProjectFromFilesResult;
+
+/** project.add_episodes 的返回：episodes 只含本次新增的集（编号从旧 MAX+1 起）。 */
+export interface AddEpisodesResult {
+  readonly added: number;
+  readonly skipped: SkippedFile[];
+  readonly episodes: Episode[];
 }
 
 export interface ProjectGetResult {
@@ -754,15 +799,21 @@ export type ServiceEvent =
 export type ServiceState = 'starting' | 'ready' | 'restarting' | 'unavailable';
 
 /** 激活状态机（唯一状态源在主进程，渲染层只读快照）。 */
-export type ActivationStatus = 'inactive' | 'verifying' | 'active' | 'suspended';
+export type ActivationStatus =
+  | 'inactive'
+  | 'verifying'
+  | 'active'
+  | 'suspended'
+  | 'reactivation_required';
 
-/** 授权暂停原因：网络 / 令牌失效 / 设备冲突 / 到期 / 停用。 */
+/** 授权暂停/强制重授权原因：网络 / 凭证失效 / 设备冲突 / 到期 / 停用 / 令牌吊销。 */
 export type ActivationSuspendedReason =
   | 'network'
   | 'invalid_token'
   | 'device_conflict'
   | 'expired'
-  | 'disabled';
+  | 'disabled'
+  | 'token_revoked';
 
 /** 渲染层可见的激活状态（绝不含令牌或激活码全文）。 */
 export interface ActivationSnapshot {
@@ -777,8 +828,10 @@ export interface ActivationSnapshot {
   readonly maskedCode: string;
   /** 只读展示的网关基址；未配置为空串。 */
   readonly gatewayUrl: string;
-  /** 仅 suspended 时存在。 */
+  /** 仅 suspended / reactivation_required 时存在。 */
   readonly reason?: ActivationSuspendedReason;
+  /** 强制重授权生效时间（ISO 8601）；未进入该状态时为空。 */
+  readonly deactivatedAt?: string;
 }
 
 /** 激活/解绑操作结果：失败时 message 是可读原因（不含敏感值），快照为操作后的状态。 */
@@ -802,6 +855,8 @@ export interface DramaClipBridge {
   pickFolder(): Promise<string | null>;
   /** 原生视频文件选择；用户取消返回 null。 */
   pickVideoFile(): Promise<string | null>;
+  /** 原生视频多选（建项目/新增素材）；用户取消返回 []。 */
+  pickVideoFiles(): Promise<PickedVideoFile[]>;
   pickAudioFile(): Promise<string | null>;
   /** 保存文本内容到用户选定路径（原生保存框，默认文件名）；取消返回 null。 */
   saveTextFile(defaultName: string, content: string): Promise<string | null>;
@@ -844,11 +899,24 @@ export interface DataPaths {
   readonly trash: string;
 }
 
+/** 云端识别积分（激活网关托管账号余额；1 积分 = 1 分钟音频）。 */
+export interface AsrCredits {
+  readonly available: boolean;
+  readonly limit: number;
+  readonly used: number;
+  readonly remaining: number;
+  readonly unit: 'minute';
+  readonly updated_at: string;
+  /** available=false 时的可读原因（未配置/令牌失效/网络等），不携带敏感值。 */
+  readonly reason?: string;
+}
+
 export const METHOD_NAMES = [
   'system.ping',
   'system.health',
   'system.shutdown',
   'project.create',
+  'project.create_from_files',
   'project.list',
   'project.get',
   'project.delete',
@@ -856,6 +924,7 @@ export const METHOD_NAMES = [
   'project.update_settings',
   'project.duplicate',
   'project.scan_episodes',
+  'project.add_episodes',
   'project.dashboard_summary',
   'project.ensure_covers',
   'project.reorder_episodes',
@@ -867,6 +936,7 @@ export const METHOD_NAMES = [
   'analysis.cancel',
   'analysis.results',
   'analysis.export_transcripts',
+  'asr.credits',
   'narration.plan_variants',
   'narration.recommend_modes',
   'narration.llm_traces',

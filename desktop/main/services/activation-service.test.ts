@@ -117,13 +117,23 @@ function makeHarness(options: HarnessOptions = {}): Harness {
     calls.push({ method, params });
     if (options.rpc !== undefined) return options.rpc(method, params);
     if (method === 'engine_configs.list') {
-      return { configs: [{ id: 'cfg-old', domain: 'llm', enabled: 1 }] };
+      // asr_cloud 域默认没有启用行；llm 域保留一条用于验证激活前的记录
+      return {
+        configs:
+          params.domain === 'asr_cloud'
+            ? []
+            : [{ id: 'cfg-old', domain: 'llm', enabled: 1 }],
+      };
     }
     if (method === 'settings.get') {
       return {
         'llm.base_url': MANAGED_BASE_URL,
         'llm.api_key': MASK,
         'llm.model': 'default',
+        'asr.engine': 'cloud_gateway',
+        'asr.model': 'fun-asr-flash',
+        'asr.base_url': MANAGED_BASE_URL,
+        'asr.api_key': MASK,
       };
     }
     return { ok: true };
@@ -172,7 +182,7 @@ afterEach(() => {
 });
 
 describe('激活流程顺序（8.1）', () => {
-  it('兑换 → 清空 llm 启用行 → 写三项托管设置 → 落加密凭证', async () => {
+  it('兑换 → 记录 prior → 清空两域启用行 → 单次写 7 键 → 落加密凭证', async () => {
     const h = makeHarness();
 
     const result = await h.service.redeem('ACT-CODE-1234');
@@ -180,15 +190,25 @@ describe('激活流程顺序（8.1）', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.map((call) => call.method)).toEqual([
       'engine_configs.list',
+      'engine_configs.list',
+      'settings.get',
+      'engine_configs.enable',
       'engine_configs.enable',
       'settings.update',
     ]);
-    expect(h.calls[1]?.params).toEqual({ domain: 'llm', local: true });
-    expect(h.calls[2]?.params).toEqual({
+    expect(h.calls[0]?.params).toEqual({ domain: 'llm' });
+    expect(h.calls[1]?.params).toEqual({ domain: 'asr_cloud' });
+    expect(h.calls[3]?.params).toEqual({ domain: 'llm', local: true });
+    expect(h.calls[4]?.params).toEqual({ domain: 'asr_cloud', local: true });
+    expect(h.calls[5]?.params).toEqual({
       values: {
-        'llm.api_key': 'token-new',
         'llm.base_url': MANAGED_BASE_URL,
         'llm.model': 'default',
+        'llm.api_key': 'token-new',
+        'asr.engine': 'cloud_gateway',
+        'asr.base_url': MANAGED_BASE_URL,
+        'asr.api_key': 'token-new',
+        'asr.model': 'fun-asr-flash',
       },
     });
     const saved = h.store.load();
@@ -307,11 +327,14 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
     expect(h.gateway.redeemCalls).toBe(1);
     expect(h.store.load()?.token).toBe('token-new');
     const autoUpdate = h.calls.find((call) => call.method === 'settings.update');
-    expect(autoUpdate?.params).toEqual({ values: { 'llm.api_key': 'token-new' } });
+    // 云端识别仍托管：同步 llm.api_key 与 asr.api_key 两个令牌，不改引擎/模型/端点
+    expect(autoUpdate?.params).toEqual({
+      values: { 'llm.api_key': 'token-new', 'asr.api_key': 'token-new' },
+    });
     expect(h.service.getSnapshot().status).toBe('active');
   });
 
-  it('自动重兑换会话一次：再次 401 不再兑换，进入 suspended(invalid_token)', async () => {
+  it('自动重兑换会话一次：再次 401 不再兑换，进入 reactivation_required(invalid_token)', async () => {
     const h = makeHarness({ initialRecord: record() });
     h.gateway.me = () => jsonResponse(401, { error: { code: 'invalid_token' } });
     h.service.start();
@@ -324,10 +347,12 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
     const snapshot = await h.service.status(true);
 
     expect(h.gateway.redeemCalls).toBe(1);
-    expect(snapshot).toMatchObject({ status: 'suspended', reason: 'invalid_token' });
+    expect(snapshot).toMatchObject({ status: 'reactivation_required', reason: 'invalid_token' });
+    expect(snapshot.deactivatedAt).toEqual(expect.any(String));
+    expect(h.store.load()).toMatchObject({ token: '', deactivated: { reason: 'invalid_token' } });
   });
 
-  it('距上次兑换不足 10 分钟：不自动重兑换，直接 suspended(invalid_token)', async () => {
+  it('距上次兑换不足 10 分钟：不自动重兑换，直接 reactivation_required(invalid_token)', async () => {
     const h = makeHarness({
       initialRecord: record({
         activatedAt: new Date(NOW_MS - 60_000).toISOString(),
@@ -339,7 +364,10 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(h.gateway.redeemCalls).toBe(0);
-    expect(h.service.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'invalid_token' });
+    expect(h.service.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'invalid_token',
+    });
     expect(REDEEM_MIN_INTERVAL_MS).toBe(10 * 60_000);
   });
 
@@ -354,12 +382,12 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
 
     expect(h.gateway.redeemCalls).toBe(0);
     expect(h.service.getSnapshot()).toMatchObject({
-      status: 'suspended',
+      status: 'reactivation_required',
       reason: 'device_conflict',
     });
   });
 
-  it('token_superseded：直接 suspended(device_conflict)，不重兑换', async () => {
+  it('token_superseded：直接 reactivation_required(device_conflict)，不重兑换', async () => {
     const h = makeHarness({ initialRecord: record() });
     h.gateway.me = () => jsonResponse(401, { error: { code: 'token_superseded' } });
 
@@ -368,20 +396,24 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
 
     expect(h.gateway.redeemCalls).toBe(0);
     expect(h.service.getSnapshot()).toMatchObject({
-      status: 'suspended',
+      status: 'reactivation_required',
       reason: 'device_conflict',
     });
   });
 
-  it('403 disabled：suspended(disabled)，且心跳不写 llm.*', async () => {
+  it('403 disabled：reactivation_required(disabled)，并只清托管 llm.api_key', async () => {
     const h = makeHarness({ initialRecord: record() });
     h.gateway.me = () => jsonResponse(403, { error: { code: 'activation_disabled' } });
 
     h.service.start();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(h.service.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'disabled' });
-    expect(h.calls.some((call) => call.method === 'settings.update')).toBe(false);
+    expect(h.service.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'disabled',
+    });
+    const updates = h.calls.filter((call) => call.method === 'settings.update');
+    expect(updates.map((call) => call.params)).toEqual([{ values: { 'llm.api_key': '' } }]);
   });
 
   it('网络不可达：suspended(network)；恢复后自动回到 active', async () => {
@@ -414,8 +446,135 @@ describe('启动恢复与自动重兑换守卫（7.4）', () => {
   });
 });
 
+describe('强制重授权（5.4）', () => {
+  it('心跳 onChange 触发落盘：清 token、写 deactivated、快照带 reason/deactivatedAt', async () => {
+    const h = makeHarness({ initialRecord: record() });
+    h.gateway.me = () => jsonResponse(401, { error: { code: 'token_revoked' } });
+
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    const snapshot = h.service.getSnapshot();
+    expect(snapshot).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'token_revoked',
+      maskedCode: '••••9911',
+    });
+    expect(snapshot.deactivatedAt).toEqual(expect.any(String));
+    const saved = h.store.load();
+    expect(saved).toMatchObject({
+      code: 'STORE-CODE-9911',
+      token: '',
+      tokenId: '',
+      deactivated: { reason: 'token_revoked' },
+    });
+    // 只清托管 LLM 令牌，不动 ASR
+    const updates = h.calls.filter((call) => call.method === 'settings.update');
+    expect(updates.map((call) => call.params)).toEqual([{ values: { 'llm.api_key': '' } }]);
+  });
+
+  it('LLM 已被用户改成自建配置：强制重授权不清 llm.api_key', async () => {
+    const h = makeHarness({
+      initialRecord: record(),
+      rpc: (method) =>
+        method === 'settings.get'
+          ? Promise.resolve({
+              'llm.base_url': 'https://custom.example/v1',
+              'llm.model': 'gpt-4o',
+              'asr.engine': 'cloud_gateway',
+            })
+          : Promise.resolve({ ok: true }),
+    });
+    h.gateway.me = () => jsonResponse(403, { error: { code: 'activation_disabled' } });
+
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.service.getSnapshot().status).toBe('reactivation_required');
+    expect(h.calls.some((call) => call.method === 'settings.update')).toBe(false);
+  });
+
+  it('强制态下 status(true) 不再发网络请求，重启仍阻断', async () => {
+    const h = makeHarness({ initialRecord: record() });
+    h.gateway.me = () => jsonResponse(401, { error: { code: 'token_superseded' } });
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.gateway.meCalls).toBe(1);
+
+    const before = h.gateway.meCalls;
+    const snapshot = await h.service.status(true);
+    expect(snapshot.status).toBe('reactivation_required');
+    expect(h.gateway.meCalls).toBe(before);
+
+    // 模拟重启：新服务读同一份凭证
+    const restarted = new ActivationService({
+      store: h.store,
+      gatewayUrl: GATEWAY,
+      rpc: h.rpc,
+      onChange: () => undefined,
+      hostname: 'test-device',
+      now: () => NOW_MS,
+      env: {},
+      fetchOptions: { fetchImpl: h.gateway.fetchImpl },
+    });
+    services.push(restarted);
+    restarted.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(restarted.getSnapshot()).toMatchObject({
+      status: 'reactivation_required',
+      reason: 'device_conflict',
+    });
+    expect(h.gateway.meCalls).toBe(before);
+  });
+
+  it('重新激活成功：清除 deactivated 并回到 active，心跳恢复', async () => {
+    const h = makeHarness({ initialRecord: record() });
+    h.gateway.me = () => jsonResponse(401, { error: { code: 'token_revoked' } });
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.store.load()?.deactivated).toBeDefined();
+
+    h.gateway.me = () => jsonResponse(200, { plan: 'pro', expires_at: '2027-01-01T00:00:00Z' });
+    const result = await h.service.redeem('ACT-CODE-NEW-1');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(result.ok).toBe(true);
+    expect(h.service.getSnapshot().status).toBe('active');
+    expect(h.service.getSnapshot().deactivatedAt).toBeUndefined();
+    expect(h.store.load()?.deactivated).toBeUndefined();
+    expect(h.store.load()?.token).toBe('token-new');
+  });
+
+  it('解绑可整体清除强制重授权状态', async () => {
+    const h = makeHarness({ initialRecord: record() });
+    h.gateway.me = () => jsonResponse(403, { error: { code: 'activation_expired' } });
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.service.getSnapshot().status).toBe('reactivation_required');
+
+    const result = await h.service.unbind();
+
+    expect(result.ok).toBe(true);
+    expect(h.store.load()).toBeNull();
+    expect(h.service.getSnapshot().status).toBe('inactive');
+  });
+
+  it('网络失败仍是 suspended(network)，不清凭证', async () => {
+    const h = makeHarness({ initialRecord: record() });
+    h.gateway.me = () => {
+      throw new TypeError('offline');
+    };
+    h.service.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(h.service.getSnapshot()).toMatchObject({ status: 'suspended', reason: 'network' });
+    expect(h.store.load()?.token).toBe('token-old');
+    expect(h.calls.some((call) => call.method === 'settings.update')).toBe(false);
+  });
+});
+
 describe('解绑（8.3/8.4）', () => {
-  it('settings 仍是托管值：清空三项、删凭证、停表，且不恢复引擎启用行', async () => {
+  it('settings 仍是托管值：清 LLM 三键 + ASR 端点/Key，删凭证、停表，且不恢复引擎启用行', async () => {
     const h = makeHarness({ initialRecord: record() });
     h.service.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -425,8 +584,20 @@ describe('解绑（8.3/8.4）', () => {
     expect(result.ok).toBe(true);
     const clearCall = h.calls.find((call) => call.method === 'settings.update');
     expect(clearCall?.params).toEqual({
-      values: { 'llm.base_url': '', 'llm.api_key': '', 'llm.model': '' },
+      values: {
+        'llm.base_url': '',
+        'llm.api_key': '',
+        'llm.model': '',
+        'asr.base_url': '',
+        'asr.api_key': '',
+      },
     });
+    // 保留 asr.engine/model 供用户手动回退，绝不重建启用行
+    const clearedKeys = Object.keys(
+      (clearCall?.params as { values: Record<string, string> }).values,
+    );
+    expect(clearedKeys).not.toContain('asr.engine');
+    expect(clearedKeys).not.toContain('asr.model');
     expect(h.calls.some((call) => call.method === 'engine_configs.enable')).toBe(false);
     expect(h.store.load()).toBeNull();
     expect(h.service.getSnapshot().status).toBe('inactive');
@@ -436,12 +607,19 @@ describe('解绑（8.3/8.4）', () => {
     expect(h.gateway.meCalls).toBe(before);
   });
 
-  it('用户手改过 base_url：只删凭证，不清设置、不恢复引擎行', async () => {
+  it('用户手改过 llm.base_url/model：只删凭证，不清 LLM 设置、不恢复引擎行', async () => {
     const h = makeHarness({
       initialRecord: record(),
       rpc: (method) =>
         method === 'settings.get'
-          ? Promise.resolve({ 'llm.base_url': 'https://custom.example/v1', 'llm.model': 'gpt-4o' })
+          ? Promise.resolve({
+              'llm.base_url': 'https://custom.example/v1',
+              'llm.model': 'gpt-4o',
+              'asr.engine': 'cloud_gateway',
+              'asr.model': 'fun-asr-flash',
+              'asr.base_url': '',
+              'asr.api_key': '',
+            })
           : Promise.resolve({ ok: true }),
     });
     h.service.start();

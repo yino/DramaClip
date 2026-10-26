@@ -1,10 +1,12 @@
 /** 渲染层唯一 IPC 出口（docs/desktop/01 §4）。组件禁止直接调 window.dramaclip。 */
 import type {
-  ActivationOperationResult, ActivationSnapshot, AnalysisJobStatus, AnalysisResults, CopyFilesResult,
-  DashboardSummary, DataPaths, DramaClipBridge,
+  ActivationOperationResult, ActivationSnapshot, AddEpisodesResult, AnalysisJobStatus, AnalysisResults,
+  AsrCredits,
+  CopyFilesResult, CreateProjectFromFilesResult, DashboardSummary, DataPaths, DramaClipBridge,
   EngineConfig, ExportJob, ExportSubmitResult, ExportTranscriptsResult, HealthResult, ImportInspection,
   ImportRecord, JobInfo, JobsListResult, LlmTraceListResult, ModeRecommendation, ModelInfo, NarrationMode,
-  NarrationPlan, OrphanCopy, PingResult, PlanDetail, PlanTraceResult, PlanVariantsResult, Project,
+  NarrationPlan, OrphanCopy, PickedVideoFile, PingResult, PlanDetail, PlanTraceResult,
+  PlanVariantsResult, Project,
   ProjectGetResult, PromptsListResult, RevealResult, RelayoutResult, ScannedEpisode, SelftestResult,
   SelftestResults, ServiceEvent, StyleInfo, SubtitlePresetInfo, TitleCandidate, TtsAutoVoiceResult,
   ToolsExtractStartResult, ToolsGetResultResult, ToolsRewriteResult, ToolsTtsResult,
@@ -41,6 +43,11 @@ export function pickAudioFile(): Promise<string | null> {
 
 export function pickVideoFile(): Promise<string | null> {
   return bridge().pickVideoFile();
+}
+
+/** 原生视频多选（建项目/新增素材）；取消返回 []（不是 null，界面无从空列表恢复状态的负担）。 */
+export function pickVideoFiles(): Promise<PickedVideoFile[]> {
+  return bridge().pickVideoFiles();
 }
 
 /** 保存文本内容（原生保存框，默认文件名）；用户取消返回 null。 */
@@ -95,6 +102,9 @@ export const systemApi = {
 export const projectApi = {
   create: (name: string, sourcePath: string): Promise<Project> =>
     rpc<Project>('project.create', { name, source_path: sourcePath }),
+  /** 多选文件建项目：只登记所选文件（不扫目录、不复制源）；无效/重复计入 skipped。 */
+  createFromFiles: (name: string, files: readonly string[]): Promise<CreateProjectFromFilesResult> =>
+    rpc<CreateProjectFromFilesResult>('project.create_from_files', { name, files }),
   list: (): Promise<Project[]> => rpc<Project[]>('project.list'),
   /** remaining = 服务端时间预算收手后仍缺封面的条数（旧服务无此字段，undefined 即无欠账）。 */
   ensureCovers: (): Promise<{ ok: boolean; generated: number; remaining?: number }> =>
@@ -111,6 +121,9 @@ export const projectApi = {
     rpc<Project>('project.duplicate', { project_id: projectId }),
   scanEpisodes: (projectId: string): Promise<ScannedEpisode[]> =>
     rpc<ScannedEpisode[]>('project.scan_episodes', { project_id: projectId }),
+  /** 追加素材（不替换、不自动分析）；分析/预筛进行中服务端返回 -32105。 */
+  addEpisodes: (projectId: string, files: readonly string[]): Promise<AddEpisodesResult> =>
+    rpc<AddEpisodesResult>('project.add_episodes', { project_id: projectId, files }),
   /** 项目级参数覆盖（K/转写档位/风格/字幕预设）；null 值 = 恢复该项全局默认。 */
   updateSettings: (
     projectId: string,
@@ -160,6 +173,11 @@ export type WorksFilter = 'passed' | 'failed' | 'partial' | 'unchecked';
 export function listWorks(limit = 60, state?: WorksFilter): Promise<WorksItem[]> {
   return rpc<WorksItem[]>('export.list_works', state === undefined ? { limit } : { limit, state });
 }
+
+/** 云端识别积分（激活网关托管）：渲染层只读余额，不接触设备令牌。 */
+export const asrApi = {
+  credits: (): Promise<AsrCredits> => rpc<AsrCredits>('asr.credits'),
+} as const;
 
 export const narrationApi = {
   /** 阶段①：AI 模式推荐（随项目缓存；refresh=true 忽略缓存重算）。 */

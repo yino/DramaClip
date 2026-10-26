@@ -7,7 +7,7 @@ import subprocess  # noqa: S404 - 参数为受控列表
 from dataclasses import dataclass
 from pathlib import Path
 
-from dramaclip.infra.ffmpeg.binaries import resolve_ffprobe
+from dramaclip.infra.ffmpeg.binaries import resolve_ffmpeg, resolve_ffprobe
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,38 @@ def probe(path: Path) -> MediaInfo:
         raise ValueError(f"ffprobe 失败({path.name})：{result.stderr.strip()[:200]}")
     payload = json.loads(result.stdout)
     return _parse(payload, path)
+
+
+def decodes_first_frame(path: Path) -> bool:
+    """用 `-xerror` 解码首帧；流头损坏时 FFmpeg 会在这里明确失败。"""
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                resolve_ffmpeg(),
+                "-hide_banner",
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
 
 
 def _parse(payload: dict, path: Path) -> MediaInfo:  # type: ignore[type-arg]

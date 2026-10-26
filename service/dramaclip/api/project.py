@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
-import re
 import time
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from dramaclip.api.context import AppContext
+from dramaclip.api.ingest_guard import active_ingest_job
+from dramaclip.api.project_import import (
+    PLAN_APPEND,
+    PLAN_CREATE,
+    VIDEO_EXTENSIONS,
+    natural_key,
+    plan_import,
+)
 from dramaclip.infra.ffmpeg import cover as cover_engine
 from dramaclip.infra.ffmpeg import probe
 from dramaclip.infra.storage.repos import episodes as episodes_repo
@@ -18,14 +26,13 @@ _ERR_PROJECT_NOT_FOUND = -32101
 _ERR_SOURCE_INVALID = -32102
 _ERR_NO_EPISODES = -32103
 _ERR_INVALID_SETTINGS = -32104
-
-_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".webm", ".flv"}
-
-_NATURAL_KEY_PATTERN = re.compile(r"(\d+)")
+_ERR_ANALYZING = -32105
 
 
 def register(router: Router, context: AppContext) -> None:
     router.register("project.create", lambda params: create(context, params))
+    router.register("project.create_from_files", lambda params: create_from_files(context, params))
+    router.register("project.add_episodes", lambda params: add_episodes(context, params))
     router.register("project.list", lambda _params: list_all(context))
     router.register("project.get", lambda params: get(context, params))
     router.register("project.delete", lambda params: delete(context, params))
@@ -47,6 +54,98 @@ def create(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
     if not directory.is_dir():
         raise RpcDomainError(_ERR_SOURCE_INVALID, f"目录不存在：{source_path}")
     return projects_repo.create(context.conn, name, source_path)
+
+
+def create_from_files(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
+    """多选文件建项目：只登记所选文件，绝不扫它们所在的目录（design D1/D2）。
+
+    来源三件套：source_path 是 ``files:<uuid>``（目录项目才有真目录，文件项目没有
+    可重扫的根），source_kind 标 files，source_root 记公共父目录（跨目录为空串，
+    界面显示“多个位置”）。源文件只被引用不被复制——用户删了原片，项目就该如实
+    显示缺源，而不是悄悄占一份副本。
+    """
+    name = str(params.get("name", "")).strip()
+    if not name:
+        raise RpcDomainError(_ERR_SOURCE_INVALID, "项目名不能为空")
+    plan = plan_import(_require_files(params), mode=PLAN_CREATE)
+    if not plan.accepted:
+        raise RpcDomainError(_ERR_NO_EPISODES, "所选文件里没有可用的视频")
+    source_path = f"files:{uuid4().hex}"
+    # 建项目与插集必须同一事务：插入半批失败时不能留下一个空项目让用户去重扫。
+    with context.conn:
+        project = projects_repo.create(
+            context.conn,
+            name,
+            source_path,
+            source_kind="files",
+            source_root=plan.common_parent,
+            commit=False,
+        )
+        episodes_repo.append_many(
+            context.conn,
+            str(project["id"]),
+            [item.as_episode() for item in plan.accepted],
+            commit=False,
+        )
+    project_id = str(project["id"])
+    _ensure_project_cover(context, project)
+    detail = get(context, {"project_id": project_id})
+    from dramaclip.api.analysis import autostart_after_scan
+
+    # 创建后沿用扫集后的自动分析；它内部吞掉 RpcDomainError，建项目成功不因
+    # 「自动分析没起来」变成失败响应（2.3）。
+    autostart_after_scan(context, project_id, len(plan.accepted))
+    return {
+        "project": detail["project"],
+        "episodes": detail["episodes"],
+        "skipped": [item.as_row() for item in plan.skipped],
+    }
+
+
+def add_episodes(context: AppContext, params: dict[str, Any]) -> dict[str, Any]:
+    """给既有项目追加素材：不替换、不重编号、不自动分析（design D3）。
+
+    分析/预筛进行中一律拒绝：运行中的作业已按旧集列表取了产物目标，此时插入新集
+    会让它读到移动中的列表。拒绝发生在任何写入之前，保证拒绝即无部分写入。
+    """
+    project_id = str(params.get("project_id", ""))
+    project = projects_repo.get(context.conn, project_id)
+    if project is None:
+        raise RpcDomainError(_ERR_PROJECT_NOT_FOUND, f"项目不存在: {project_id}")
+    job = active_ingest_job(context.conn, project_id)
+    if job is not None:
+        raise RpcDomainError(
+            _ERR_ANALYZING, f"项目正在{job['type']}，请等当前任务结束后再新增素材"
+        )
+    files = _require_files(params)
+    existing = [
+        str(row["source_path"])
+        for row in episodes_repo.list_by_project(context.conn, project_id)
+    ]
+    plan = plan_import(files, mode=PLAN_APPEND, existing=existing)
+    if not plan.accepted:
+        raise RpcDomainError(_ERR_NO_EPISODES, "所选文件里没有可新增的视频")
+    with context.conn:
+        added = episodes_repo.append_many(
+            context.conn,
+            project_id,
+            [item.as_episode() for item in plan.accepted],
+            commit=False,
+        )
+        if str(project.get("source_kind", "folder")) == "folder":
+            # 目录项目追加了外部文件 → mixed，但 source_root 仍是原目录：它既是
+            # 来源展示的落点，也是“还能不能重扫/从哪补封面”的判据，不能被覆盖。
+            context.conn.execute(
+                "UPDATE projects SET source_kind = 'mixed', updated_at = ? WHERE id = ?",
+                (int(time.time() * 1000), project_id),
+            )
+    _ensure_project_cover(context, project)
+    episodes = get(context, {"project_id": project_id})["episodes"]
+    return {
+        "added": added,
+        "skipped": [item.as_row() for item in plan.skipped],
+        "episodes": episodes[-added:],
+    }
 
 
 def list_all(context: AppContext) -> list[dict[str, Any]]:
@@ -107,11 +206,20 @@ def dashboard_summary(context: AppContext) -> dict[str, int]:
 
 
 def scan_episodes(context: AppContext, params: dict[str, Any]) -> list[dict[str, Any]]:
-    """扫描项目目录：视频文件自然排序 → ffprobe 逐个 → 全量替换 episodes。"""
+    """扫描项目目录：视频文件自然排序 → ffprobe 逐个 → 全量替换 episodes。
+
+    只适用于目录来源项目：files/mixed 的 source_path 是内置引用或补丁目录，重扫
+    既可能空目录报错，也会用目录快照覆盖掉多选文件集——那类项目走「新增素材」。
+    """
     project_id = str(params.get("project_id", ""))
     project = projects_repo.get(context.conn, project_id)
     if project is None:
         raise RpcDomainError(_ERR_PROJECT_NOT_FOUND, f"项目不存在: {project_id}")
+    if str(project.get("source_kind", "folder")) != "folder":
+        raise RpcDomainError(
+            _ERR_SOURCE_INVALID,
+            f"仅目录来源项目支持重扫，文件/混合项目请使用新增素材：{project['name']}",
+        )
     videos = sorted(
         (p for p in Path(project["source_path"]).iterdir() if _is_video(p)),
         key=lambda path: natural_key(path.name),
@@ -233,10 +341,24 @@ def _ensure_cover(context: AppContext, project: dict[str, Any]) -> bool:
     return True
 
 
+def _ensure_project_cover(context: AppContext, project: dict[str, Any]) -> bool:
+    """只补项目封面（缺封面才拍）。
+
+    逐集封面交给 ensure_covers 的 8 秒预算涓流：导入接口里再复刻一遍无预算的逐集
+    循环，会把单线程 dispatch 堵到 ServiceManager 误判服务已死。追加素材时项目
+    封面通常已在，不为补一集重拍第一帧。
+    """
+    if not _cover_missing(project.get("cover_path")):
+        return False
+    return _ensure_cover(context, project)
+
+
 def _is_video(path: Path) -> bool:
-    return path.is_file() and path.suffix.lower() in _VIDEO_EXTENSIONS
+    return path.is_file() and path.suffix.lower() in VIDEO_EXTENSIONS
 
 
-def natural_key(text: str) -> list[int | str]:
-    """数字感知排序键：ep2 < ep10。纯函数可单测。"""
-    return [int(part) if part.isdigit() else part for part in _NATURAL_KEY_PATTERN.split(text)]
+def _require_files(params: dict[str, Any]) -> list[Any]:
+    files = params.get("files")
+    if not isinstance(files, list) or not files:
+        raise RpcDomainError(_ERR_SOURCE_INVALID, "files 必须为非空数组")
+    return files

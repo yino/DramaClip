@@ -12,6 +12,7 @@ export const STATUS_LABEL: Record<ActivationStatus, string> = {
   verifying: '校验中',
   active: '已激活',
   suspended: '已暂停',
+  reactivation_required: '需要重新激活',
 };
 
 /** 状态色调：未激活走中性、校验中警示、激活成功、暂停错误。 */
@@ -20,6 +21,7 @@ export const STATUS_TONE: Record<ActivationStatus, { color: string; background: 
   verifying: { color: tokens.colorWarning, background: tokens.warningSoft },
   active: { color: tokens.colorSuccess, background: tokens.successSoft },
   suspended: { color: tokens.colorError, background: tokens.errorSoft },
+  reactivation_required: { color: tokens.colorError, background: tokens.errorSoft },
 };
 
 export const REASON_LABEL: Record<ActivationSuspendedReason, string> = {
@@ -28,6 +30,17 @@ export const REASON_LABEL: Record<ActivationSuspendedReason, string> = {
   device_conflict: '激活码已在其他设备使用',
   expired: '授权已到期',
   disabled: '授权已被停用',
+  token_revoked: '设备授权已被吊销',
+};
+
+/** 强制重授权页的说明文案（D5）；未识别原因按凭证失效处理。 */
+export const REACTIVATION_TEXT: Record<ActivationSuspendedReason, string> = {
+  disabled: '激活码已被停用，请输入新的激活码。',
+  expired: '激活码已到期，请输入新的激活码。',
+  device_conflict: '该激活码已在其他设备使用，请重新激活。',
+  token_revoked: '此设备的授权已被吊销，请重新输入激活码。',
+  invalid_token: '授权凭证已失效，请重新输入激活码。',
+  network: '授权校验失败，请检查网络后重新输入激活码。',
 };
 
 export const MANAGED_HINT =
@@ -55,13 +68,22 @@ export function isManaged(snapshot: ActivationSnapshot | null): boolean {
   return snapshot !== null && snapshot.status !== 'inactive';
 }
 
-/** 暂停态需要拦截依赖 LLM 的入口（本地功能不拦）。 */
+/** 暂停或强制重授权都需要拦截依赖 LLM 的入口（本地功能不拦）。 */
 export function isLlmBlocked(snapshot: ActivationSnapshot | null): boolean {
-  return snapshot !== null && snapshot.status === 'suspended';
+  return (
+    snapshot !== null &&
+    (snapshot.status === 'suspended' || snapshot.status === 'reactivation_required')
+  );
 }
 
-/** 暂停原因文案；非暂停态返回空串。 */
+/** 暂停原因文案；其余状态返回空串。 */
 export function suspensionText(snapshot: ActivationSnapshot): string {
   if (snapshot.status !== 'suspended') return '';
   return REASON_LABEL[snapshot.reason ?? 'network'];
+}
+
+/** 强制重授权原因文案；其余状态返回空串。 */
+export function reactivationText(snapshot: ActivationSnapshot): string {
+  if (snapshot.status !== 'reactivation_required') return '';
+  return REACTIVATION_TEXT[snapshot.reason ?? 'invalid_token'];
 }

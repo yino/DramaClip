@@ -25,11 +25,25 @@ export function Rail() {
             width: layout.rail.divider.width,
             height: 1,
             background: tokens.borderSecondary,
-            margin: `${tokens.spaceXs} 0`,
+            margin: `${tokens.spaceMd} 0`,
           }}
         />,
       );
     }
+    groups.push(
+      <div
+        key={`label-${group}`}
+        style={{
+          width: layout.rail.button.width,
+          padding: `${tokens.spaceSm} ${tokens.spaceMd}`,
+          fontSize: tokens.text.badge.size,
+          lineHeight: tokens.text.badge.leading,
+          color: tokens.textTertiary,
+        }}
+      >
+        {group === 'loop' ? '创作' : '系统'}
+      </div>,
+    );
     for (const item of NAV_ITEMS) {
       if (item.group !== group) continue;
       const active = isNavActive(item, location.pathname);
@@ -55,8 +69,8 @@ export function Rail() {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: tokens.spaceSm,
-        paddingTop: tokens.spaceMd,
+        gap: tokens.spaceXs,
+        padding: `${tokens.spaceMd} ${tokens.spaceLg}`,
         background: tokens.bgSidebar,
         borderRight: `1px solid ${tokens.borderSecondary}`,
       }}
@@ -85,10 +99,11 @@ function RailButton({
         width: layout.rail.button.width,
         height: layout.rail.button.height,
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
-        gap: tokens.spaceXs,
+        justifyContent: 'flex-start',
+        gap: tokens.spaceMd,
+        padding: `0 ${tokens.spaceMd}`,
         borderRadius: tokens.radiusControl,
         border: 'none',
         background: active ? tokens.accentSoft : 'transparent',
@@ -106,8 +121,8 @@ function RailButton({
       {icon}
       <span
         style={{
-          fontSize: tokens.text.badge.size,
-          lineHeight: tokens.text.badge.leading,
+          fontSize: tokens.text.body.size,
+          lineHeight: tokens.text.body.leading,
           fontWeight: active ? tokens.text.badge.weightActive : tokens.text.badge.weight,
         }}
       >

@@ -8,9 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import { dramaTheme, layout, tokens } from '../styles/theme';
 
-describe('§1.1 六档字阶：行高写进同一个 token', () => {
-  it('六档齐备，size/leading/weight 成对', () => {
+describe('§1.1 字阶：行高写进同一个 token', () => {
+  it('各档齐备，size/leading/weight 成对', () => {
     expect(tokens.text).toEqual({
+      heroTitle: { size: '38px', leading: '48px', weight: 500, weightLatin: 600 },
       pageTitle: { size: '28px', leading: '36px', weight: 500, weightLatin: 600 },
       sectionTitle: { size: '20px', leading: '28px', weight: 600, weightLatin: 600 },
       cardTitle: { size: '16px', leading: '24px', weight: 600, weightLatin: 600 },
@@ -87,7 +88,7 @@ describe('§3.2 / §3.4 视觉通道与色阶必须在 token 层分得开', () =
 
 describe('§2 布局度量必须有人引用', () => {
   it('导轨 / 状态栏 / 底栏 / 分栏 / 列表行高全部登记在 layout', () => {
-    expect(layout.rail.width).toBe(68);
+    expect(layout.rail.width).toBe(220);
     expect(layout.statusBar.height).toBe(26);
     expect(layout.footer.height).toBe(46);
     expect(layout.row.single).toBe(36);

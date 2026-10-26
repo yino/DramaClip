@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import type { ExportJob, ModeRecommendation, NarrationMode, Project } from '@dramaclip/protocol';
 import { PageHeader as PageKitHeader, PageShell } from '../../components/layout/PageKit';
 import { MODE_INFO } from '../../components/modeMeta';
+import { K_MAX, K_MIN, useModePicks } from './useModePicks';
 import { exportApi, narrationApi, projectApi, settingsApi } from '../../services/client';
 import { rememberDrama } from '../../stores/lastDrama';
 import { useUiStore } from '../../stores/ui';
@@ -21,29 +22,20 @@ import { useFocusScroll } from './useFocusScroll';
 import { usePlanBatch } from './usePlanBatch';
 
 const ALL_MODES = MODE_INFO.map((item) => item.mode) as NarrationMode[];
-/** K 的兜底值：设置读不到/读脏时用，与服务端 narration.variants_per_mode 默认值同口径。 */
-const DEFAULT_K = 3;
-/** K 下拉的合法区间（ModePicker K_OPTIONS 1–8）；设置值越界就不采用。 */
-const K_MIN = 1;
-const K_MAX = 8;
-
-function toggleMode(setModes: React.Dispatch<React.SetStateAction<NarrationMode[]>>, mode: NarrationMode): void {
-  setModes((prev) => (prev.includes(mode) ? prev.filter((m) => m !== mode) : [...prev, mode]));
-}
 
 /** K 默认初值读设置页同键 narration.variants_per_mode（键与消费端同源）；
  * 读不到、读脏或越界（K 下拉只有 1–8）就保持兜底值，不硬塞。 */
-function useKDefault(serviceState: string, setK: (k: number) => void): void {
+function useKDefault(serviceState: string, setDefaultK: (k: number) => void): void {
   useEffect(() => {
     if (serviceState !== 'ready') return;
     void settingsApi
       .get()
       .then((values) => {
         const parsed = Number.parseInt(values['narration.variants_per_mode'] ?? '', 10);
-        if (Number.isFinite(parsed) && parsed >= K_MIN && parsed <= K_MAX) setK(parsed);
+        if (Number.isFinite(parsed) && parsed >= K_MIN && parsed <= K_MAX) setDefaultK(parsed);
       })
       .catch(() => undefined);
-  }, [serviceState, setK]);
+  }, [serviceState, setDefaultK]);
 }
 
 /** ③ 区段容器：与 PageShell 同一节奏的纵向排布，focus 滚动的锚。 */
@@ -90,12 +82,12 @@ function useProductionProject(projectId: string): {
 export function ProductionPage() {
   const { projectId = '' } = useParams();
   const serviceState = useUiStore((state) => state.serviceState);
-  const [modes, setModes] = useState<NarrationMode[]>([]);
   const [recommendation, setRecommendation] = useState<ModeRecommendation | null>(null);
   const [recLoading, setRecLoading] = useState(false);
-  const [k, setK] = useState<number>(DEFAULT_K);
+  const [recSettled, setRecSettled] = useState(false);
   const [exports, setExports] = useState<ExportJob[] | null>(null);
   const { project, episodeCount, episodeCovers } = useProductionProject(projectId);
+  const picks = useModePicks(projectId, project, recommendation, recSettled);
   const { planningRef, exportRef } = useFocusScroll();
 
   const reloadExports = useCallback(async () => {
@@ -107,14 +99,17 @@ export function ProductionPage() {
     void reloadExports();
   }, [reloadExports, serviceState]);
 
-  // K 默认（09-10 §4.6「生产线默认值」）：初值读设置页同键，不写死 3
-  useKDefault(serviceState, setK);
+  // K 默认（09-10 §4.6「生产线默认值」）：初值读设置页同键，不写死 3；
+  // 但上一批方案规格或用户已手选的 K 优先，晚到的全局默认不覆盖。
+  useKDefault(serviceState, picks.setDefaultK);
 
-  // AI 模式推荐：服务端随项目缓存（命中秒回，未命中现算并落缓存）
+  // AI 模式推荐：服务端随项目缓存（命中秒回，未命中现算并落缓存）。
+  // 勾选初始化在 useModePicks：上一批方案 > 推荐 > 空。
   useEffect(() => {
     if (serviceState !== 'ready' || projectId === '') return;
     let cancelled = false;
     setRecLoading(true);
+    setRecSettled(false);
     narrationApi
       .recommendModes(projectId)
       .then((rec) => {
@@ -122,36 +117,31 @@ export function ProductionPage() {
       })
       .catch(() => undefined)
       .finally(() => {
-        if (!cancelled) setRecLoading(false);
+        if (!cancelled) {
+          setRecLoading(false);
+          setRecSettled(true);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [projectId, serviceState]);
 
-  // 推荐到位且用户尚未手选 → 默认勾上推荐模式；手动改过就绝不覆盖
-  useEffect(() => {
-    if (recommendation === null) return;
-    setModes((prev) => {
-      if (prev.length > 0) return prev;
-      const ids = recommendation.modes.map((item) => item.mode) as NarrationMode[];
-      return ids;
-    });
-  }, [recommendation]);
-
+  const replaceModes = picks.replaceModes;
   const onRerollRecommendation = useCallback(() => {
     setRecLoading(true);
     narrationApi
       .recommendModes(projectId, true)
       .then((rec) => {
         setRecommendation(rec);
-        setModes(rec.modes.map((m) => m.mode) as NarrationMode[]); // 显式重算=用户授权覆盖
+        // 显式重算=用户授权覆盖（同时把 K 视为已手选，晚到的默认值不覆盖）
+        replaceModes(rec.modes.map((m) => m.mode) as NarrationMode[]);
       })
       .catch(() => undefined)
       .finally(() => {
         setRecLoading(false);
       });
-  }, [projectId]);
+  }, [projectId, replaceModes]);
 
   const batch = usePlanBatch(projectId);
   // 受管模型暂停：方案生成/重新推荐是 LLM 入口，禁用但不禁用页面其它本地操作
@@ -175,19 +165,17 @@ export function ProductionPage() {
         <StyleSelectCard />
         <ModePicker
           batch={batch}
-          modes={modes}
+          modes={picks.modes}
           onGenerate={onGenerate}
           recommendation={recommendation}
           recLoading={recLoading}
           onReroll={onRerollRecommendation}
-          k={k}
-          onToggleMode={(mode) => {
-            toggleMode(setModes, mode);
-          }}
+          k={picks.k}
+          onToggleMode={picks.toggleMode}
           onSelectAll={() => {
-            setModes(ALL_MODES);
+            picks.replaceModes(ALL_MODES);
           }}
-          onKChange={setK}
+          onKChange={picks.setK}
           llmBlocked={llmBlocked}
         />
         {batch.planning ? (

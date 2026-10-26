@@ -9,6 +9,13 @@ import type {
   RevealResult,
   ServiceEvent,
 } from '@dramaclip/protocol';
+import type { PickedVideoFile } from './services/dialog';
+
+/** 4.1 的桥方法尚未进 @dramaclip/protocol 的 DramaClipBridge（4.2 由导入线补类型）。
+ *  这里先就地扩展接口：protocol 补齐后签名结构一致，satisfies 不会被多余属性卡住。 */
+interface PendingVideoFilesBridge {
+  pickVideoFiles(): Promise<PickedVideoFile[]>;
+}
 
 const api = {
   rpc: (method: string, params: Record<string, unknown> = {}): Promise<unknown> =>
@@ -20,6 +27,8 @@ const api = {
     ipcRenderer.invoke('dialog:pickFolder') as Promise<string | null>,
   pickVideoFile: (): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickVideoFile') as Promise<string | null>,
+  pickVideoFiles: (): Promise<PickedVideoFile[]> =>
+    ipcRenderer.invoke('dialog:pickVideoFiles') as Promise<PickedVideoFile[]>,
   pickAudioFile: (): Promise<string | null> =>
     ipcRenderer.invoke('dialog:pickAudioFile') as Promise<string | null>,
   saveTextFile: (defaultName: string, content: string): Promise<string | null> =>
@@ -50,6 +59,6 @@ const api = {
     ipcRenderer.on('activation:changed', listener);
     return () => ipcRenderer.removeListener('activation:changed', listener);
   },
-} as const satisfies DramaClipBridge;
+} as const satisfies DramaClipBridge & PendingVideoFilesBridge;
 
 contextBridge.exposeInMainWorld('dramaclip', api);
