@@ -36,6 +36,8 @@ jobs:
 
       - name: Build Python sidecar
         shell: pwsh
+        env:
+          PYTHONUTF8: '1'
         run: .\.venv\Scripts\python.exe .\scripts\build-service.py
 
       - name: Smoke-test Python sidecar
