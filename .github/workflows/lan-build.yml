@@ -1,0 +1,65 @@
+name: Build Windows LAN package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Package DramaClip for Windows
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Create Python venv and install service dependencies
+        shell: bash
+        run: |
+          python -m venv .venv
+          .venv/Scripts/python.exe -m pip install --upgrade pip
+          .venv/Scripts/pip.exe install -e 'service[ml]'
+
+      - name: Install desktop dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Python sidecar
+        run: npm run dist:service
+
+      - name: Smoke-test Python sidecar
+        run: node scripts/verify_sidecar.mjs
+
+      - name: Build Windows installer and portable ZIP
+        run: npm run dist --workspace @dramaclip/desktop
+        env:
+          ELECTRON_MIRROR: https://github.com/electron/electron/releases/download/
+
+      - name: Verify bundled LAN gateway
+        shell: pwsh
+        run: |
+          $gateway = Get-Content "desktop/release/win-unpacked/resources/app-resources/gateway.json" -Raw | ConvertFrom-Json
+          if ($gateway.url -ne "http://192.168.31.185:8000") {
+            throw "Unexpected bundled gateway URL: $($gateway.url)"
+          }
+          Write-Host "Bundled gateway: $($gateway.url)"
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: DramaClip-Windows-LAN
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.zip
+          if-no-files-found: error
+          retention-days: 3
