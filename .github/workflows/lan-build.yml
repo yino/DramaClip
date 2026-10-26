@@ -41,6 +41,8 @@ jobs:
         run: .\.venv\Scripts\python.exe .\scripts\build-service.py
 
       - name: Smoke-test Python sidecar
+        env:
+          DRAMACLIP_SIDECAR_CORE_ONLY: '1'
         run: node scripts/verify_sidecar.mjs
 
       - name: Build Windows installer and portable ZIP
